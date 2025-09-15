@@ -1,6 +1,6 @@
 class Network {
     constructor() {
-        this.socket = io('http://localhost:3000'); // Replace with your server address
+        this.socket = io('https://graveyard420woo.github.io/skyfish/:3000'); // Replace with your server address
 
         this.socket.on('connect', () => {
             console.log('Connected to the server!');
