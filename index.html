@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sky Fish Island</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bungee+Spice&family=Silkscreen&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main id="board-container">
+        <canvas id="game-board"></canvas>
+		
+        <div id="turn-timer">
+            <span id="timer-display">30</span>
+        </div>
+
+        <div id="game-info">
+             <div class="info-item player-display">
+                <div id="player-color-indicator"></div>
+                <p>PLAYER <span id="current-player">1</span></p>
+            </div>
+            <div class="info-item">
+                <p>CLOUD</p><h2 id="cloud-shards">0</h2>
+            </div>
+            <button id="end-turn-btn">END TURN</button>
+        </div>
+        <div id="choice-prompt" class="hidden">
+            <h3 id="prompt-text">Choose a Tile Type:</h3>
+            <div id="prompt-options"></div>
+        </div>
+        <div id="error-panel" class="hidden">
+            <p id="error-message"></p>
+        </div>
+        <div id="battle-popup" class="hidden">
+            <div class="battle-container">
+                <div class="battle-fish" id="battle-fish-1"><span>P1</span></div>
+                <div class="vs-text">VS</div>
+                <div class="battle-fish" id="battle-fish-2"><span>P2</span></div>
+            </div>
+            <h3 id="battle-result"></h3>
+        </div>
+        <div id="sprite-container"></div>
+        <div id="tile-effects-container"></div>
+    </main>
+
+    <footer id="hand-container">
+        <div id="discard-zone">
+            <span>D I S C A R D</span>
+        </div>
+        <div id="player-hand">
+            <!-- Cards are dynamically added here -->
+        </div>
+        <!-- FIX: Moved placeholder to be a direct child of the flex container -->
+        <div id="cancel-action-placeholder" class="hidden"></div>
+    </footer>
+
+    <script src="game.js"></script>
+</body>
+</html>

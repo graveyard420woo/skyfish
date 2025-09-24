@@ -1,0 +1,283 @@
+:root {
+    --hot-pink: #FF007F;
+    --cyan-accent: #00f6ff;
+    --dark-bg: #1a111a;
+    --light-bg: #2d1d2d;
+    --text-light: #f0e6f0;
+    --border-color: rgba(0, 246, 255, 0.4);
+    --font-primary: 'Silkscreen', sans-serif;
+    --font-accent: 'Bungee Spice', cursive;
+}
+html, body { 
+height: 100%; 
+margin: 0; 
+padding: 0; 
+overflow: hidden;
+}
+body { background-color: var(--dark-bg); color: var(--text-light); font-family: var(--font-primary); display: flex; flex-direction: column; background-image: url('bg.png'); background-position: center; background-size: cover; display: flex; }
+/*body { background-color: var(--dark-bg); color: var(--text-light); font-family: var(--font-primary); display: flex; flex-direction: column; }*/
+#board-container { flex-grow: 1; position: relative; min-height: 0; cursor: grab; }
+#board-container:grabbing { cursor: grabbing; }
+#hand-container {
+    flex-shrink: 0;
+    /* NEW: Transparent, dark background with a blur effect */
+    background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(5px);
+    border-top: 1px solid rgba(0, 0, 0, 0.3); /* Add a top border to define the edge */
+    z-index: 10;
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-start;
+}
+#player-hand { display: flex; justify-content: center; align-items: center; gap: 20px; padding: 20px; }
+#game-board { display: block; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); backdrop-filter: blur(1px); }
+#discard-zone {
+    width: 120px;
+    flex-shrink: 0; /* Prevents it from shrinking */
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #1a1a1a;
+    border-right: 2px solid rgba(0, 0, 0, 0.3);
+    font-family: var(--font-primary);
+    font-size: 20px;
+    letter-spacing: 4px;
+    color: rgba(255,255,255,0.2);
+    transition: all 0.2s ease-out;
+}
+#discard-zone.drag-over { background-color: var(--hot-pink); color: var(--text-light); box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
+
+/* --- Card Redesign & Animations --- */
+.card { width: 180px; height: 100%; max-height: 200px; background: linear-gradient(-45deg, #1d141d, #3c2d3c); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease-out; cursor: pointer; position: relative; box-shadow: inset 0 0 2px rgba(0, 246, 255, 0.3), 0 2px 5px rgba(0,0,0,0.3); padding: 10px; }
+.card:hover { transform: translateY(-15px) scale(1.05); border-color: var(--cyan-accent); }
+.card.dragging { opacity: 0.5; transform: scale(0.95); }
+.card.newly-drawn { animation: card-draw 0.4s ease-out forwards; }
+.card.placeholder-active { visibility: hidden; } /* Hides the card in hand when action is pending */
+.card-playing-animation { animation: card-play 0.5s ease-in-out forwards; z-index: 1000; pointer-events: none; position: absolute; }
+
+.card-header { display: flex; justify-content: space-between; align-items: baseline; }
+.card-name { font-family: var(--font-primary); font-size: 16px; color: var(--text-light); text-shadow: 0 0 5px var(--cyan-accent); }
+.card-cost { font-family: var(--font-accent); font-size: 28px; color: var(--hot-pink); }
+.card-art { height: 70px; background: rgba(0,0,0,0.2); border: 1px dashed var(--border-color); border-radius: 4px; margin: 10px 0; }
+.card-description { font-family: var(--font-primary); font-size: 14px; text-align: right; line-height: 1.3; color: var(--cyan-accent); }
+
+/* --- Cancel Action Placeholder --- */
+#cancel-action-placeholder {
+    width: 180px; height: 200px;
+    border: 2px dashed rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
+    font-family: var(--font-primary);
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease-out;
+    margin: 10px; /* Aligns with hand padding */
+}
+#cancel-action-placeholder:hover { border-color: var(--hot-pink); color: var(--text-light); }
+
+@keyframes card-draw { from { opacity: 0; transform: translateY(100px) rotate(-15deg); } to { opacity: 1; transform: translateY(0) rotate(0deg); } }
+@keyframes card-play { 0% { opacity: 1; transform: scale(1.05) rotateX(0deg); box-shadow: 0 0 20px var(--cyan-accent); } 100% { opacity: 0; transform: scale(1.3) rotateX(45deg); box-shadow: 0 0 50px var(--hot-pink); } }
+
+/* --- UI Overlays --- */
+#turn-timer { position: absolute; top: 20px; left: 20px; font-family: var(--font-accent); font-size: 48px; color: var(--text-light); text-shadow: 0 0 10px var(--cyan-accent); transition: color 0.3s, text-shadow 0.3s; }
+#turn-timer.warning { color: var(--hot-pink); text-shadow: 0 0 10px var(--hot-pink); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: 0.6; } }
+#game-info { position: absolute; top: 20px; right: 20px; background-color: rgba(0,0,0,0.5); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 15px; display: flex; align-items: center; gap: 20px; backdrop-filter: blur(5px); }
+.info-item p { margin: 0; font-size: 14px; }
+.info-item h2 { margin: 5px 0 0 0; font-family: var(--font-accent); font-size: 32px; color: var(--text-light); }
+.player-display { display: flex; align-items: center; gap: 10px; }
+#player-color-indicator { width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; }
+#end-turn-btn { background-color: var(--hot-pink); color: var(--text-light); border: none; font-family: var(--font-primary); font-size: 14px; padding: 15px 20px; border-radius: 5px; cursor: pointer; transition: background-color 0.2s, transform 0.2s; }
+#end-turn-btn:hover { background-color: #ff3399; transform: scale(1.05); }
+#error-panel { position: absolute; bottom: 20px; left: 50%; background-color: #c00000; color: white; font-family: var(--font-primary); font-size: 14px; padding: 10px 20px; border-radius: 5px; border: 1px solid #ff4d4d; z-index: 200; opacity: 0; transition: all 0.3s ease-in-out; pointer-events: none; transform: translate(-50%, 10px); }
+#error-panel.visible { opacity: 1; transform: translate(-50%, -20px); }
+.hidden { display: none !important; }
+
+#choice-prompt {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(145deg, var(--light-bg), var(--dark-bg));
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px 30px;
+    text-align: center;
+    z-index: 3000;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+    width: 400px;
+    animation: popup-enter 0.3s ease-out;
+}
+
+#choice-prompt h3 {
+    margin: 0 0 20px 0;
+    font-family: var(--font-primary);
+    font-size: 18px;
+    color: var(--text-light);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 15px;
+    text-shadow: 0 0 5px var(--cyan-accent);
+}
+
+#prompt-options {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+#prompt-options button {
+    font-family: var(--font-primary);
+    font-size: 16px;
+    padding: 15px 25px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    color: var(--text-light);
+    transition: all 0.2s ease-out;
+    background: rgba(0,0,0,0.2);
+}
+
+#prompt-options button:hover {
+    transform: scale(1.05) translateY(-2px);
+    box-shadow: 0 0 15px var(--cyan-accent);
+    border-color: var(--cyan-accent);
+    color: var(--cyan-accent);
+}
+#prompt-options button[data-type="Forest"] { background-color: #2e8b57; }
+#prompt-options button[data-type="Mountain"] { background-color: #8d8585; }
+#prompt-options button[data-type="Water"] { background-color: #5f9ea0; }
+
+#sprite-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allows clicks to pass through to the canvas */
+    overflow: hidden; /* Prevents sprites from appearing outside the board area */
+}
+
+.creature-sprite {
+    position: absolute;
+    /* Size is now controlled by JavaScript via --sprite-size variable */
+    width: var(--sprite-size, 60px); 
+    height: var(--sprite-size, 60px);
+    transform: translate(-50%, -85%);
+    transition: opacity 0.3s ease-in-out, width 0.2s ease-out, height 0.2s ease-out; /* Added smooth size transition */
+    animation: sprite-enter 0.5s ease-out forwards;
+    will-change: transform, opacity, width, height;
+    z-index: 5;
+}
+
+.creature-sprite.disappearing {
+    animation: sprite-exit 0.4s ease-in forwards;
+}
+
+#tile-effects-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* Allows clicks to pass through */
+    overflow: hidden;
+}
+
+.tile-effect {
+    position: absolute;
+    transform-origin: center center;
+    will-change: transform, opacity;
+    z-index: 2; /* Sits below sprites but above the canvas background */
+}
+
+/* This is the shimmer effect from before, now it will work */
+.tile-shimmer {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        110deg,
+        rgba(255, 255, 255, 0) 40%,
+        rgba(255, 255, 255, 0.25) 50%,
+        rgba(255, 255, 255, 0) 60%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 5s infinite linear;
+}
+
+.tile:hover .tile-shimmer {
+    opacity: 1;
+}
+
+/* --- BATTLE POPUP --- */
+#battle-popup { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); z-index: 200; display: flex; flex-direction: column; align-items: center; justify-content: center; backdrop-filter: blur(5px); transition: opacity 0.5s ease-in-out; }
+.battle-container { display: flex; align-items: center; gap: 30px; }
+.battle-fish { width: 100px; height: 100px; border-radius: 50%; border: 4px solid white; display: flex; align-items: center; justify-content: center; font-family: var(--font-accent); font-size: 48px; text-shadow: 2px 2px 5px black; }
+.vs-text { font-family: var(--font-header); font-size: 64px; color: var(--hot-pink); }
+#battle-result { font-family: var(--font-primary); font-size: 24px; margin-top: 30px; color: var(--cyan-accent); text-align: center; }
+.bonking#battle-fish-1 { animation: bonk-left 1.5s ease-in-out; }
+.bonking#battle-fish-2 { animation: bonk-right 1.5s ease-in-out; }
+.loser { animation: shake 0.5s linear infinite; }
+@keyframes bonk-left { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(40px); } }
+@keyframes bonk-right { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-40px); } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+@keyframes sprite-enter {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -85%) scale(0.5);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -85%) scale(1);
+    }
+}
+
+@keyframes sprite-exit {
+    from {
+        opacity: 1;
+        transform: translate(-50%, -85%) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translate(-50%, -85%) scale(0.5);
+    }
+}
+@keyframes shimmer {
+    from {
+        background-position: 200% 0;
+    }
+    to {
+        background-position: -200% 0;
+    }
+}
+
+/* This is a placeholder for potential future tile-specific animations */
+.tile-ambient {
+    animation: float 8s infinite ease-in-out;
+}
+
+@keyframes float {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-2px);
+    }
+}
+
+@keyframes popup-enter {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -40%) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
