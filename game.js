@@ -22,9 +22,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const battleFish1 = document.getElementById('battle-fish-1');
     const battleFish2 = document.getElementById('battle-fish-2');
     const battleResult = document.getElementById('battle-result');
-    const cancelActionPlaceholder = document.getElementById('cancel-action-placeholder');
-	const tileEffectsContainer = document.getElementById('tile-effects-container');
+    const tileEffectsContainer = document.getElementById('tile-effects-container');
 	const spriteContainer = document.getElementById('sprite-container');
+	const animationLayer = document.getElementById('animation-layer');
 	const ZOOM_SPEED = 0.001;
 	const MIN_ZOOM_TARGET = 20;
 	const MAX_ZOOM_TARGET = 100;
@@ -33,7 +33,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let TILE_SIZE = { current: 0, target: 50 };
     let TILE_HEIGHT = 0;
     let SHADOW_OFFSET = 0;
-    let boardView = { rotation: Math.PI / 6, tilt: Math.PI / 3.5, targetRotation: Math.PI / 6, targetTilt: Math.PI / 3.5 };
     let mouseState = { isDown: false, lastX: 0, lastY: 0, hoveredTile: null };
     let newTiles = [];
     let projectiles = [];
@@ -49,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Constants
     const TILE_TYPES = ['Forest', 'Mountain', 'Water'];
-    const PRETTY_COLORS = ['#ffcc00', '#b300ff', '#00e6e6', '#33cc33'];
+    const PRETTY_COLORS = ['#ffcc00', '#b300ff', '#00e6e6', '#33cc33', '#ff6600', '#ff0066', '#66ff66', '#6666ff'];
     const TILE_COLORS = {
     'Forest':   { h: 140, s: 55, l: 40 }, // HSL: Hue, Saturation, Lightness
     'Mountain': { h: 210, s: 10, l: 65 },
@@ -70,10 +69,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const MAX_TILT = Math.PI / 2.2;
     const MAX_HAND_SIZE = 6;
 	const TAPER_FACTOR = 1.15;
+	
+	const handPlayerInfo = document.getElementById('hand-player-info');
+	const handPlayerColorIndicator = document.getElementById('hand-player-color-indicator'); 
+	const handCurrentPlayer = document.getElementById('hand-current-player'); 
+
+let boardView = {
+    rotation: Math.PI / 6,
+    tilt: Math.PI / 3.5,
+    targetRotation: Math.PI / 6,
+    targetTilt: Math.PI / 3.5,
+    pan: { x: 0, y: 0 },
+    targetPan: { x: 0, y: 0 }
+};
 
     function gameLoop() {
         boardView.rotation += (boardView.targetRotation - boardView.rotation) * 0.1;
         boardView.tilt += (boardView.targetTilt - boardView.tilt) * 0.1;
+		
+		boardView.pan.x += (boardView.targetPan.x - boardView.pan.x) * 0.1;
+  		boardView.pan.y += (boardView.targetPan.y - boardView.pan.y) * 0.1;
+		
         TILE_SIZE.current += (TILE_SIZE.target - TILE_SIZE.current) * 0.1;
 
         TILE_HEIGHT = TILE_SIZE.current * 0.3;
@@ -95,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
         const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
         const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
-        ctx.translate(canvas.width / 2 - centerPixel.x, canvas.height / 2 - centerPixel.y);
+        ctx.translate(canvas.width / 2 - centerPixel.x + boardView.pan.x, canvas.height / 2 - centerPixel.y + boardView.pan.y);
         const allTiles = [...gameState.board.values(), ...newTiles.map(nt => nt.tile)];
         allTiles.sort((a, b) => { const posA = axialToIsometric(a.q, a.r); const posB = axialToIsometric(b.q, b.r); const depthDiff = posA.depth - posB.depth; if (Math.abs(depthDiff) < 0.1) return posA.x - posB.x; return depthDiff; });
         allTiles.forEach(tile => drawDropShadow(ctx, tile.q, tile.r));
@@ -113,14 +129,21 @@ document.addEventListener('DOMContentLoaded', () => {
         canvas.addEventListener('mousedown', e => { mouseState.isDown = true; mouseState.lastX = e.clientX; mouseState.lastY = e.clientY; boardContainer.classList.add('grabbing'); });
         window.addEventListener('mouseup', () => { mouseState.isDown = false; boardContainer.classList.remove('grabbing'); });
 		canvas.addEventListener('mousemove', e => {
-			if (mouseState.isDown && e.buttons === 1) { // MODIFIED: Check if left mouse is actually pressed
-				const dx = e.clientX - mouseState.lastX;
-				const dy = e.clientY - mouseState.lastY;
+			if (mouseState.isDown && e.buttons === 1) { // Left-click drag
+			const dx = e.clientX - mouseState.lastX;
+			const dy = e.clientY - mouseState.lastY;
+		
+			if (e.ctrlKey || e.metaKey) { // Pan if Ctrl (or Cmd on Mac) is held
+				boardView.targetPan.x += dx;
+				boardView.targetPan.y += dy;
+			} else { // Rotate otherwise
 				boardView.targetRotation += dx * 0.005;
 				boardView.targetTilt = Math.max(MIN_TILT, Math.min(MAX_TILT, boardView.targetTilt - dy * 0.005));
-				mouseState.lastX = e.clientX;
-				mouseState.lastY = e.clientY;
-			} else {
+			}
+			
+			mouseState.lastX = e.clientX;
+			mouseState.lastY = e.clientY;
+		} else {
 				mouseState.hoveredTile = pixelToAxial(e.offsetX, e.offsetY);
 				calculateValidMoves();
 			}
@@ -136,19 +159,45 @@ document.addEventListener('DOMContentLoaded', () => {
         discardZone.addEventListener('dragover', e => { e.preventDefault(); discardZone.classList.add('drag-over'); });
         discardZone.addEventListener('dragleave', () => { discardZone.classList.remove('drag-over'); });
         discardZone.addEventListener('drop', e => { e.preventDefault(); discardZone.classList.remove('drag-over'); const cardIndex = parseInt(e.dataTransfer.getData('text/plain'), 10); if (!isNaN(cardIndex)) { getCurrentPlayer().hand.splice(cardIndex, 1); updateUI(); } });
-        cancelActionPlaceholder.addEventListener('click', cancelAction);
+		const spawnPlayerBtn = document.getElementById('spawn-player-btn');
+	    spawnPlayerBtn.addEventListener('click', spawnNewPlayer);
+
     }
 
-    function initializeGame() {
-        gameState = { players: [ { id: 1, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[0], turnsWithNoTiles: 0 }, { id: 2, id: 2, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[1], turnsWithNoTiles: 0 } ], currentPlayerIndex: 0, board: new Map(), action: null, pendingCard: null, validMoves: [], turn: 1 };
-        generateRandomBoard(3);
-        gameState.players.forEach(p => {
-			for (let i = 0; i < 3; i++) drawCard(p);
-		});
-        resizeAndCalculateTargetSize();
-        updateUI();
-        startTurnTimer();
-    }
+function initializeGame() {
+    gameState = {
+        players: [], // Start with an empty array
+        currentPlayerIndex: 0,
+        board: new Map(),
+        action: null,
+        pendingCard: null,
+        validMoves: [],
+        turn: 1
+    };
+    
+    // Create Player 1
+    const player1 = { id: 1, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[0], turnsWithNoTiles: 0 };
+    gameState.players.push(player1);
+    spawnNewPlayerBoard(); // Spawn the first board at the center
+
+    // Create Player 2
+    const player2 = { id: 2, id: 2, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[1], turnsWithNoTiles: 0 };
+    gameState.players.push(player2);
+    spawnNewPlayerBoard(); // Spawn the second board connected to the first
+
+    // Draw initial hands for the first two players
+    drawCard(player1); drawCard(player1); drawCard(player1);
+    drawCard(player2); drawCard(player2); drawCard(player2);
+    
+    let keys = [...gameState.board.keys()].map(k => k.split(',').map(Number));
+    boardDimensions.minQ = Math.min(...keys.map(k => k[0]));
+    boardDimensions.maxQ = Math.max(...keys.map(k => k[0]));
+    boardDimensions.minR = Math.min(...keys.map(k => k[1]));
+    boardDimensions.maxR = Math.max(...keys.map(k => k[1]));
+    resizeAndCalculateTargetSize();
+    updateUI();
+    startTurnTimer();
+}
 
     function playCard(player, cardIndex) {
         if (gameState.action) { showError("Complete your current action first!"); return; }
@@ -192,11 +241,11 @@ document.addEventListener('DOMContentLoaded', () => {
     await handleEndOfTurnAbilities(outgoingPlayer);
 
     gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
-    
-    // --- FIX: Re-declared the incomingPlayer variable here ---
     const incomingPlayer = getCurrentPlayer();
     
-    let wasCardDrawn = false;
+    // Always draw a card for the new player first
+    const wasCardDrawn = drawCard(incomingPlayer);
+    
     if (incomingPlayer.turnsWithNoTiles >= 3) {
         showError("Mercy of the Clouds!");
         incomingPlayer.cloudShards += 3;
@@ -211,8 +260,8 @@ document.addEventListener('DOMContentLoaded', () => {
         incomingPlayer.cloudShards += resourceGain;
     }
     
-    wasCardDrawn = drawCard(incomingPlayer);
-    updateUI(wasCardDrawn);
+    // Now, update the UI with the knowledge of whether a card was successfully drawn
+    updateUI(wasCardDrawn); 
     endTurnBtn.disabled = false;
     startTurnTimer();
 }
@@ -250,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Step 2: Handle all creature actions (like Golem attacks and Dryad spawns) ---
     const golems = [...gameState.board.values()].filter(t => t.creature && t.creature.ownerId === player.id && t.creature.type === 'Golem');
-    for (const golemTile of golems) { const opponentTiles = [...gameState.board.values()].filter(t => t.controller && t.controller !== player.id && getDistance(golemTile, t) <= 5); if (opponentTiles.length > 0) { const targetTile = opponentTiles[Math.floor(Math.random() * opponentTiles.length)]; projectiles.push({ start: golemTile, end: targetTile, progress: 0 }); } }
+    for (const golemTile of golems) { const opponentTiles = [...gameState.board.values()].filter(t => t.controller && t.controller !== player.id && getDistance(golemTile, t) <= 5 && (!t.golemImmunityTurns || t.golemImmunityTurns <= 0)); if (opponentTiles.length > 0) { const targetTile = opponentTiles[Math.floor(Math.random() * opponentTiles.length)]; projectiles.push({ start: golemTile, end: targetTile, progress: 0 }); } }
 
     const dryads = [...gameState.board.values()].filter(t => t.creature && t.creature.ownerId === player.id && t.creature.type === 'Dryad');
     for (const dryadTile of dryads) { const emptyNeighbors = getNeighbors(dryadTile.q, dryadTile.r).filter(n => !gameState.board.has(`${n.q},${n.r}`)); for (let i = 0; i < 2 && emptyNeighbors.length > 0; i++) { const newTilePos = emptyNeighbors.splice(Math.floor(Math.random() * emptyNeighbors.length), 1)[0]; const newTileObject = { q: newTilePos.q, r: newTilePos.r, type: 'Forest', controller: null, creature: null }; gameState.board.set(`${newTilePos.q},${newTilePos.r}`, newTileObject); newTiles.push({ tile: newTileObject, progress: 0 }); boardExpanded = true; } }
@@ -283,6 +332,13 @@ document.addEventListener('DOMContentLoaded', () => {
 			tile.creature = null;
 		}
 	});
+	
+	// --- Step 5: Decrement all active immunity timers on the board ---
+	for (const tile of gameState.board.values()) {
+		if (tile.golemImmunityTurns && tile.golemImmunityTurns > 0) {
+			tile.golemImmunityTurns--;
+		}
+	}
 
     if (boardExpanded) { let keys = [...gameState.board.keys()].map(k => k.split(',').map(Number)); boardDimensions.minQ = Math.min(...keys.map(k => k[0])); boardDimensions.maxQ = Math.max(...keys.map(k => k[0])); boardDimensions.minR = Math.min(...keys.map(k => k[1])); boardDimensions.maxR = Math.max(...keys.map(k => k[1])); resizeAndCalculateTargetSize(); }
 }
@@ -311,7 +367,6 @@ document.addEventListener('DOMContentLoaded', () => {
     winnerFishElement.classList.remove('bonking');
     loserFishElement.classList.add('loser');
 
-    // --- FIX: Explicitly remove both original sprites ---
     // The attacker's sprite is removed because it either moves or is destroyed.
     // The defender's sprite is removed because it is either destroyed or replaced by the winner.
     removeSprite(attackerTile);
@@ -321,6 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
     attackerTile.creature = null; // Attacker's original tile is now always empty.
     defenderTile.creature = winner.creatureData; // The winner's creature data moves to the defender's tile.
     defenderTile.controller = winner.player.id; // The winner's owner controls the tile.
+	defenderTile.golemImmunityTurns = 2;
 
     // Create the single new sprite for the winner in its final location.
     createOrUpdateSprite(defenderTile);
@@ -343,6 +399,140 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         tick();
     }
+	
+	function spawnNewPlayer() {
+    if (gameState.players.length >= PRETTY_COLORS.length) {
+        showError("Max players reached for this demo!");
+        return;
+    }
+
+    // --- Logic is now just for creating the player data ---
+    const newPlayerId = gameState.players.length + 1;
+    const newPlayer = {
+        id: newPlayerId,
+        hand: [],
+        deck: [],
+        cloudShards: 1,
+        color: PRETTY_COLORS[newPlayerId - 1],
+        turnsWithNoTiles: 0
+    };
+    gameState.players.push(newPlayer);
+    
+    // Call the dedicated function to place their board
+    spawnNewPlayerBoard();
+
+    // Draw their initial hand
+    drawCard(newPlayer);
+    drawCard(newPlayer);
+    drawCard(newPlayer);
+    
+    // Update camera and UI
+    let keys = [...gameState.board.keys()].map(k => k.split(',').map(Number));
+    boardDimensions.minQ = Math.min(...keys.map(k => k[0]));
+    boardDimensions.maxQ = Math.max(...keys.map(k => k[0]));
+    boardDimensions.minR = Math.min(...keys.map(k => k[1]));
+    boardDimensions.maxR = Math.max(...keys.map(k => k[1]));
+    resizeAndCalculateTargetSize();
+    
+    updateUI();
+    showError(`Player ${newPlayerId} has joined the game!`);
+}
+
+function spawnNewPlayerBoard() {
+    let anchorPoint = { q: 0, r: 0 };
+    const newPlayer = gameState.players[gameState.players.length - 1];
+
+    if (gameState.board.size > 0) {
+        const allEmptyEdgeSpots = new Set();
+        for (const tile of gameState.board.values()) {
+            const neighbors = getNeighbors(tile.q, tile.r);
+            for (const neighbor of neighbors) {
+                const key = `${neighbor.q},${neighbor.r}`;
+                if (!gameState.board.has(key)) { allEmptyEdgeSpots.add(key); }
+            }
+        }
+
+        const availableSpots = Array.from(allEmptyEdgeSpots).map(key => { const [q, r] = key.split(',').map(Number); return { q, r }; });
+
+        if (availableSpots.length === 0) {
+            showError("No available space to expand the world!");
+            return;
+        }
+
+        let bestSpawnLocation = null;
+        let minPlayerCollisions = Infinity;
+        let minNeutralCollisions = Infinity;
+
+        for (const spot of availableSpots) {
+            let currentPlayerCollisions = 0;
+            let currentNeutralCollisions = 0;
+            const newBoardRadius = 3;
+
+            for (let q = -newBoardRadius; q <= newBoardRadius; q++) {
+                for (let r = Math.max(-newBoardRadius, -q - newBoardRadius); r <= Math.min(newBoardRadius, -q + newBoardRadius); r++) {
+                    const checkQ = spot.q + q;
+                    const checkR = spot.r + r;
+                    const checkKey = `${checkQ},${checkR}`;
+                    if (gameState.board.has(checkKey)) {
+                        if (gameState.board.get(checkKey).controller !== null) {
+                            currentPlayerCollisions++; // This is a critical collision
+                        } else {
+                            currentNeutralCollisions++; // This is an acceptable collision
+                        }
+                    }
+                }
+            }
+
+            // A spot with fewer player collisions is ALWAYS better.
+            if (currentPlayerCollisions < minPlayerCollisions) {
+                minPlayerCollisions = currentPlayerCollisions;
+                minNeutralCollisions = currentNeutralCollisions;
+                bestSpawnLocation = spot;
+            } 
+            // If player collisions are equal, pick the one with fewer neutral collisions.
+            else if (currentPlayerCollisions === minPlayerCollisions) {
+                if (currentNeutralCollisions < minNeutralCollisions) {
+                    minNeutralCollisions = currentNeutralCollisions;
+                    bestSpawnLocation = spot;
+                }
+            }
+        }
+        anchorPoint = bestSpawnLocation;
+    }
+    
+    const newBoardRadius = 3;
+    const newBoardTemplate = new Map();
+    for (let q = -newBoardRadius; q <= newBoardRadius; q++) {
+        for (let r = Math.max(-newBoardRadius, -q - newBoardRadius); r <= Math.min(newBoardRadius, -q + newBoardRadius); r++) {
+            const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)];
+            newBoardTemplate.set(`${q},${r}`, { q, r, type, controller: null, creature: null });
+        }
+    }
+
+    const tilesForNewPlayer = [];
+    for (const [key, tile] of newBoardTemplate.entries()) {
+        const newQ = tile.q + anchorPoint.q;
+        const newR = tile.r + anchorPoint.r;
+        const newKey = `${newQ},${newR}`;
+        
+        // --- The new placement rule ---
+        // Only place a new tile if the spot is empty OR if the existing tile is unowned.
+        const existingTile = gameState.board.get(newKey);
+        if (!existingTile || existingTile.controller === null) {
+            if (existingTile) { removeSprite(existingTile); } // Remove sprite of the unowned tile
+            
+            const newTileObject = { ...tile, q: newQ, r: newR };
+            gameState.board.set(newKey, newTileObject);
+            newTiles.push({ tile: newTileObject, progress: 0 });
+            tilesForNewPlayer.push(newTileObject);
+        }
+    }
+    
+    if (tilesForNewPlayer.length > 0) {
+        const startTile = tilesForNewPlayer[Math.floor(Math.random() * tilesForNewPlayer.length)];
+        startTile.controller = newPlayer.id;
+    }
+}
     
 	function drawCard(player) {
 		if (player.hand.length >= MAX_HAND_SIZE) return false;
@@ -356,29 +546,42 @@ document.addEventListener('DOMContentLoaded', () => {
 	}
 	
 	function updateSpritePositions() {
-		// This function will run every frame to keep sprites in the correct 3D position
 		const allCreatureTiles = [...gameState.board.values()].filter(t => t.creature);
+		const existingSpriteIds = new Set();
 	
 		allCreatureTiles.forEach(tile => {
 			const spriteId = `sprite-${tile.q}-${tile.r}`;
+			existingSpriteIds.add(spriteId);
 			let spriteElement = document.getElementById(spriteId);
 	
-			if (spriteElement) {
-				const { x, y } = axialToIsometric(tile.q, tile.r);
-				const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
-				const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
-				const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
+			// If the sprite element doesn't exist, create it.
+			// This handles cases where state might change outside of normal functions.
+			if (!spriteElement) {
+				spriteElement = createOrUpdateSprite(tile);
+			}
 	
-				const screenX = (canvas.width / 2 - centerPixel.x) + x;
-				const screenY = (canvas.height / 2 - centerPixel.y) + y - TILE_HEIGHT;
-				
-				spriteElement.style.setProperty('--sprite-size', `${TILE_SIZE.current * 1.2}px`);
+			const { x, y, depth } = axialToIsometric(tile.q, tile.r);
+			
+			// We now add the boardView.pan offsets to the sprite's position,
+			// just like we do for the tiles in the main render loop.
+			const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
+			const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
+			const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
 	
-				spriteElement.style.left = `${screenX}px`;
-				spriteElement.style.top = `${screenY}px`;
+			const screenX = (canvas.width / 2 - centerPixel.x) + x + boardView.pan.x;
+			const screenY = (canvas.height / 2 - centerPixel.y) + y - TILE_HEIGHT + boardView.pan.y;
 	
-				// Adjust Z-index for correct layering based on depth
-				spriteElement.style.zIndex = Math.round(y + 1000); 
+			spriteElement.style.left = `${screenX}px`;
+			spriteElement.style.top = `${screenY}px`;
+			spriteElement.style.setProperty('--sprite-size', `${TILE_SIZE.current * 1.2}px`);
+			spriteElement.style.zIndex = Math.round(depth + 1000); // Use depth for more accurate layering
+		});
+	
+		// Clean up any sprites that are on the screen but no longer in the game state
+		const allSpriteElements = document.querySelectorAll('.creature-sprite');
+		allSpriteElements.forEach(spriteEl => {
+			if (!existingSpriteIds.has(spriteEl.id)) {
+				spriteEl.remove();
 			}
 		});
 	}
@@ -463,56 +666,94 @@ document.addEventListener('DOMContentLoaded', () => {
     ctx.fillStyle = color;
     ctx.fill();
 
-    // ADD THESE LINES BACK
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; // A subtle white stroke
     ctx.lineWidth = 1;
     ctx.stroke();
 }
 	    
     function updateUI(wasCardDrawn = false) {
-        const player = getCurrentPlayer();
-        cloudShardsElement.textContent = player.cloudShards;
-        currentPlayerElement.textContent = player.id;
-        playerColorIndicator.style.backgroundColor = player.color;
-        playerHandElement.innerHTML = '';
-        
-        let cardToAnimateIndex = -1;
+    const player = getCurrentPlayer();
+    
+    // Update top-right and hand header UI
+    cloudShardsElement.textContent = player.cloudShards;
+    currentPlayerElement.textContent = player.id;
+    playerColorIndicator.style.backgroundColor = player.color;
+    handCurrentPlayer.textContent = player.id;
+    handPlayerColorIndicator.style.backgroundColor = player.color;
+    
+    playerHandElement.innerHTML = ''; // Clear the hand completely
+    
+    let cardToAnimateIndex = -1;
+    const isPending = gameState.pendingCard !== null;
+    const handSize = isPending ? player.hand.length + 1 : player.hand.length;
 
-        player.hand.forEach((card, i) => {
+    // We build a temporary array of what to display in the hand
+    const displayItems = [...player.hand];
+    if (isPending) {
+        // If an action is pending, we insert a special "placeholder" object
+        // into our display array at the card's original position.
+        displayItems.splice(gameState.pendingCard.index, 0, { isPlaceholder: true });
+    }
+
+    displayItems.forEach((item, displayIndex) => {
+        const arcAngle = 10;
+        const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
+        const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
+        const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
+
+        if (item.isPlaceholder) {
+            // If it's the placeholder, create the cancel button
+            const placeholder = document.createElement('div');
+            placeholder.id = 'cancel-action-placeholder';
+            placeholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
+            placeholder.style.setProperty('--card-transform', transformStyle); // Apply arc
+            placeholder.onclick = cancelAction;
+            playerHandElement.appendChild(placeholder);
+        } else {
+            // Otherwise, create the card element
+            const card = item;
+            const originalIndex = player.hand.indexOf(card); // Find its real index in the data
             const el = document.createElement('div');
             el.className = 'card';
             el.draggable = true;
-            if (gameState.pendingCard && i === gameState.pendingCard.index) { el.classList.add('placeholder-active'); }
+            el.style.setProperty('--card-transform', transformStyle); // Apply arc
+
             el.innerHTML = `<div class="card-header"><span class="card-name">${card.name}</span><span class="card-cost">${card.cost}</span></div><div class="card-art"></div><div class="card-description">${card.desc}</div>`;
-            el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', i); setTimeout(() => el.classList.add('dragging'), 0); });
+            
+            el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', originalIndex); setTimeout(() => el.classList.add('dragging'), 0); });
             el.addEventListener('dragend', () => el.classList.remove('dragging'));
-            el.onclick = () => playCard(player, i);
+            el.onclick = () => playCard(player, originalIndex);
+            
             playerHandElement.appendChild(el);
-            if (wasCardDrawn && i === player.hand.length - 1) { cardToAnimateIndex = i; }
-        });
-        
-        cancelActionPlaceholder.classList.add('hidden');
-        if (gameState.pendingCard !== null) {
-            const cardNode = playerHandElement.children[gameState.pendingCard.index];
-            if (cardNode) {
-                cancelActionPlaceholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
-                cardNode.parentNode.insertBefore(cancelActionPlaceholder, cardNode);
-                cancelActionPlaceholder.classList.remove('hidden');
+
+            if (wasCardDrawn && originalIndex === player.hand.length - 1) {
+                cardToAnimateIndex = displayIndex;
             }
         }
-        
-        if (cardToAnimateIndex !== -1) {
-            playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+    });
+    
+    if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
+        playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+    }
+}
+
+    function generateRandomBoard(radius) {
+    // This function now only generates the very first island.
+    for (let q = -radius; q <= radius; q++) {
+        for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) {
+            const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)];
+            gameState.board.set(`${q},${r}`, { q, r, type, controller: null, creature: null });
         }
     }
-
-    function generateRandomBoard(radius) { gameState.board.clear(); for (let q = -radius; q <= radius; q++) { for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) { const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)]; gameState.board.set(`${q},${r}`, { q, r, type, controller: null, creature: null }); } } gameState.board.get(`0,${-radius}`).controller = 1; gameState.board.get(`0,${radius}`).controller = 2; let keys = [...gameState.board.keys()].map(k => k.split(',').map(Number)); boardDimensions.minQ = Math.min(...keys.map(k => k[0])); boardDimensions.maxQ = Math.max(...keys.map(k => k[0])); boardDimensions.minR = Math.min(...keys.map(k => k[1])); boardDimensions.maxR = Math.max(...keys.map(k => k[1])); }
-    function resizeAndCalculateTargetSize() { canvas.width = boardContainer.clientWidth; canvas.height = boardContainer.clientHeight; const boardWidthInTiles = (boardDimensions.maxQ - boardDimensions.minQ) + 3; const boardHeightInTiles = (boardDimensions.maxR - boardDimensions.minR) + 3; const sizeBasedOnWidth = canvas.width / (boardWidthInTiles * 1.5); const sizeBasedOnHeight = canvas.height / (boardHeightInTiles * 1.73); TILE_SIZE.target = Math.min(sizeBasedOnWidth, sizeBasedOnHeight) * 0.95; }
+}
+    function resizeAndCalculateTargetSize() { canvas.width = boardContainer.clientWidth; canvas.height = boardContainer.clientHeight; 
+	boardView.pan = { x: 0, y: 0 };
+    boardView.targetPan = { x: 0, y: 0 };
+	const boardWidthInTiles = (boardDimensions.maxQ - boardDimensions.minQ) + 3; const boardHeightInTiles = (boardDimensions.maxR - boardDimensions.minR) + 3; const sizeBasedOnWidth = canvas.width / (boardWidthInTiles * 1.5); const sizeBasedOnHeight = canvas.height / (boardHeightInTiles * 1.73); TILE_SIZE.target = Math.min(sizeBasedOnWidth, sizeBasedOnHeight) * 0.95; }
     function axialToIsometric(q, r) {
     const SPACING_FACTOR = 1; // Add a little space between tiles
     const x3d = TILE_SIZE.current * 1.5 * q * SPACING_FACTOR;
     const z3d = TILE_SIZE.current * 1.73 * (r + q / 2) * SPACING_FACTOR;
-    // ... rest of function is identical
     const rotatedX = x3d * Math.cos(boardView.rotation) - z3d * Math.sin(boardView.rotation);
     const rotatedZ = x3d * Math.sin(boardView.rotation) + z3d * Math.cos(boardView.rotation);
     const screenX = rotatedX;
@@ -539,7 +780,7 @@ document.addEventListener('DOMContentLoaded', () => {
     gradient.addColorStop(0, sideLight);
     gradient.addColorStop(1, sideDark);
 
-    const topSize = TILE_SIZE.current;
+    const topSize = TILE_SIZE.current+.1;
     const bottomSize = TILE_SIZE.current * TAPER_FACTOR; // Calculate the wider base size
 
     for (let i = 0; i < 8; i++) {
@@ -584,9 +825,37 @@ document.addEventListener('DOMContentLoaded', () => {
     	gameState.board.get(key).creature = creatureData;
     	createOrUpdateSprite(gameState.board.get(key));
 } else if (gameState.action.type === 'claim_tile') { gameState.board.get(key).controller = player.id; } else if (gameState.action.type === 'respawn') { const tile = gameState.board.get(key); tile.controller = player.id; } cancelAction(); } else { if (gameState.action) showError("Invalid move!"); } }
-    function pixelToAxial(px, py) { const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2; const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2; const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R); const mouseX = px - (canvas.width / 2 - centerPixel.x); const mouseY = py - (canvas.height / 2 - centerPixel.y); const rot = -boardView.rotation; const tilt = boardView.tilt; const rotX = mouseX; const rotZ = mouseY / Math.sin(tilt); const x3d = rotX * Math.cos(rot) - rotZ * Math.sin(rot); const z3d = rotX * Math.sin(rot) + rotZ * Math.cos(rot); const q = x3d / (TILE_SIZE.current * 1.5); const r = (z3d / (TILE_SIZE.current * 1.73)) - (q / 2); return roundToNearestAxial(q, r); }
+    function pixelToAxial(px, py) {
+    const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
+    const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
+    const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
+
+    // We subtract the current pan offset from the mouse coordinates.
+    // This effectively translates the click back into the board's "unpanned" coordinate system,
+    // ensuring the logical click matches the visual click perfectly.
+    const mouseX = px - (canvas.width / 2 - centerPixel.x + boardView.pan.x);
+    const mouseY = py - (canvas.height / 2 - centerPixel.y + boardView.pan.y);
+
+    const rot = -boardView.rotation;
+    const tilt = boardView.tilt;
+    
+    // The rest of the projection math remains the same
+    const rotX = mouseX;
+    const rotZ = mouseY / Math.sin(tilt);
+    
+    const x3d = rotX * Math.cos(rot) - rotZ * Math.sin(rot);
+    const z3d = rotX * Math.sin(rot) + rotZ * Math.cos(rot);
+
+    const q = x3d / (TILE_SIZE.current * 1.5 * 1.05); // Include spacing factor
+    const r = (z3d / (TILE_SIZE.current * 1.73 * 1.05)) - (q / 2); // Include spacing factor
+    
+    return roundToNearestAxial(q, r);
+}
     function startAction(action) { gameState.action = action; calculateValidMoves(); }
-    function cancelAction() { if (gameState.pendingCard) { getCurrentPlayer().cloudShards += gameState.pendingCard.card.cost; } gameState.action = null; gameState.pendingCard = null; gameState.validMoves = []; rangeHighlights = []; hideChoicePrompt(); updateUI(); }
+    function cancelAction() { if (gameState.pendingCard) { getCurrentPlayer().cloudShards += gameState.pendingCard.card.cost; }  if (gameState.action && gameState.action.type === 'respawn') {
+        // If they cancel the respawn, reset their counter so they get the option again.
+        getCurrentPlayer().turnsWithNoTiles = 3; 
+    } gameState.action = null; gameState.pendingCard = null; gameState.validMoves = []; rangeHighlights = []; hideChoicePrompt(); updateUI(); }
     function calculateValidMoves() { rangeHighlights = []; gameState.validMoves = []; const player = getCurrentPlayer(); if (!gameState.action) return; switch (gameState.action.type) { case 'place_tile': const friendlyTiles = [...gameState.board.values()].filter(t => t.controller === player.id); const validCoords = new Set(); friendlyTiles.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { if (!gameState.board.has(`${n.q},${n.r}`)) validCoords.add(`${n.q},${n.r}`); }); }); gameState.validMoves = [...validCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'summon_creature': const validPlacements = [...gameState.board.values()].filter(t => t.controller === player.id && t.type === gameState.action.targetTile && !t.creature); gameState.validMoves = validPlacements.map(t => ({ q: t.q, r: t.r })); if (gameState.action.creature.type === 'Golem') { if (mouseState.hoveredTile && validPlacements.some(t => t.q === mouseState.hoveredTile.q && t.r === mouseState.hoveredTile.r)) { for (const tile of gameState.board.values()) { if (getDistance(mouseState.hoveredTile, tile) <= 5) { rangeHighlights.push(tile); } } } } break; case 'claim_tile': const friendlyTilesClaim = [...gameState.board.values()].filter(t => t.controller === player.id); const validClaimCoords = new Set(); friendlyTilesClaim.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { const key = `${n.q},${n.r}`; const neighborTile = gameState.board.get(key); if (neighborTile && neighborTile.controller === null) { validClaimCoords.add(key); } }); }); gameState.validMoves = [...validClaimCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'respawn': const unownedTiles = [...gameState.board.values()].filter(t => t.controller === null); gameState.validMoves = unownedTiles.map(t => ({ q: t.q, r: t.r })); break; } }
     function showError(message) { errorMessage.textContent = message; errorPanel.classList.remove('hidden'); errorPanel.classList.add('visible'); setTimeout(() => { errorPanel.classList.remove('visible'); }, 2500); }
     function showChoicePrompt(text, options, callback) { promptTextElement.textContent = text; promptOptionsElement.innerHTML = ''; options.forEach(opt => { const btn = document.createElement('button'); btn.textContent = opt; btn.dataset.type = opt; btn.onclick = () => { hideChoicePrompt(); callback(opt); }; promptOptionsElement.appendChild(btn); }); choicePromptElement.classList.remove('hidden'); }
@@ -596,7 +865,24 @@ document.addEventListener('DOMContentLoaded', () => {
     function getNeighbors(q, r) { return [ { q: q + 1, r: r }, { q: q - 1, r: r }, { q: q, r: r + 1 }, { q: q, r: r - 1 }, { q: q + 1, r: r - 1 }, { q: q - 1, r: r + 1 } ]; }
     function getDistance(tileA, tileB) { const dQ = Math.abs(tileA.q - tileB.q); const dR = Math.abs(tileA.r - tileB.r); const dS = Math.abs((-tileA.q - tileA.r) - (-tileB.q - tileB.r)); return Math.max(dQ, dR, dS); }
     function roundToNearestAxial(q, r) { const s = -q - r; let rq = Math.round(q); let rr = Math.round(r); let rs = Math.round(s); const q_diff = Math.abs(rq - q); const r_diff = Math.abs(rr - r); const s_diff = Math.abs(rs - s); if (q_diff > r_diff && q_diff > s_diff) { rq = -rr - rs; } else if (r_diff > s_diff) { rr = -rq - rs; } return { q: rq, r: rr }; }
-    function triggerPlayAnimation(cardElement) { if (!cardElement) return; const rect = cardElement.getBoundingClientRect(); const clone = cardElement.cloneNode(true); clone.classList.remove('newly-drawn'); clone.style.position = 'absolute'; clone.style.left = `${rect.left}px`; clone.style.top = `${rect.top}px`; clone.style.width = `${rect.width}px`; clone.style.height = `${rect.height}px`; document.body.appendChild(clone); clone.classList.add('card-playing-animation'); clone.addEventListener('animationend', () => clone.remove()); }
+    function triggerPlayAnimation(cardElement) {
+    if (!cardElement) return;
+    const rect = cardElement.getBoundingClientRect();
+    const clone = cardElement.cloneNode(true);
+    clone.classList.remove('newly-drawn');
+    clone.style.position = 'absolute'; // Important for positioning relative to the screen
+    clone.style.left = `${rect.left}px`;
+    clone.style.top = `${rect.top}px`;
+    clone.style.width = `${rect.width}px`;
+    clone.style.height = `${rect.height}px`;
+
+    // We append it to the #board-container. Because this container is no longer
+    // in a flex relationship with the hand, it will never cause a layout squish.
+    boardContainer.appendChild(clone);
+
+    clone.classList.add('card-playing-animation');
+    clone.addEventListener('animationend', () => clone.remove());
+}
 
     window.addEventListener('resize', resizeAndCalculateTargetSize);
     endTurnBtn.addEventListener('click', endTurn);
