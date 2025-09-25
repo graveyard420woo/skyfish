@@ -199,31 +199,33 @@ function initializeGame() {
     startTurnTimer();
 }
 
-    function playCard(player, cardIndex) {
-        if (gameState.action) { showError("Complete your current action first!"); return; }
-
-        const card = player.hand[cardIndex];
-        if (player.cloudShards < card.cost) { showError("Not enough Cloud!"); return; }
-        if (card.effect.type === 'summon_creature') { const canSummon = [...gameState.board.values()].some(t => t.controller === player.id && t.type === card.effect.targetTile && !t.creature); if (!canSummon) { showError(`No valid ${card.effect.targetTile} tiles available!`); return; } }
-        
-        player.cloudShards -= card.cost;
-        const { effect } = card;
-        
-        if (effect.type === 'gain_resource') {
-            const cardElement = playerHandElement.children[cardIndex];
-            if(cardElement) triggerPlayAnimation(cardElement);
-            player.hand.splice(cardIndex, 1);
-            player.cloudShards += effect.amount;
+    function playCard(player, cardIndex, cardElement) {
+    if (gameState.action) { showError("Complete your current action first!"); return; }
+    const card = player.hand[cardIndex];
+    if (player.cloudShards < card.cost) { showError("Not enough Cloud!"); return; }
+    if (card.effect.type === 'summon_creature') { const canSummon = [...gameState.board.values()].some(t => t.controller === player.id && t.type === card.effect.targetTile && !t.creature); if (!canSummon) { showError(`No valid ${card.effect.targetTile} tiles available!`); return; } }
+    
+    // --- The Core Fix: Capture position BEFORE any UI updates ---
+    const rect = cardElement.getBoundingClientRect();
+    
+    player.cloudShards -= card.cost;
+    const { effect } = card;
+    
+    if (effect.type === 'gain_resource') {
+        triggerPlayAnimation(card, rect); // Pass the captured rect
+        player.hand.splice(cardIndex, 1);
+        player.cloudShards += effect.amount;
+    } else {
+        // Store the captured rect in the pendingCard state
+        gameState.pendingCard = { card: player.hand[cardIndex], index: cardIndex, rect: rect };
+        if (effect.type === 'place_choice_tile') {
+            showChoicePrompt('Choose a tile to place:', effect.options, choice => { startAction({ type: 'place_tile', tileType: choice }); });
         } else {
-            gameState.pendingCard = { card: player.hand[cardIndex], index: cardIndex };
-            if (effect.type === 'place_choice_tile') {
-                showChoicePrompt('Choose a tile to place:', effect.options, choice => { startAction({ type: 'place_tile', tileType: choice }); });
-            } else {
-                startAction(effect);
-            }
+            startAction(effect);
         }
-        updateUI();
     }
+    updateUI();
+}
 
     async function endTurn() {
     if (gameState.pendingCard) { cancelAction(); }
@@ -346,8 +348,6 @@ function initializeGame() {
     async function triggerBattle(attackerTile, defenderTile) {
     const attackerPlayer = gameState.players.find(p => p.id === attackerTile.creature.ownerId);
     const defenderPlayer = gameState.players.find(p => p.id === defenderTile.creature.ownerId);
-
-    // Early exit if players are somehow null to prevent errors
     if (!attackerPlayer || !defenderPlayer) return;
 
     battleResult.textContent = `Player ${attackerPlayer.id}'s Sky Fish attacks Player ${defenderPlayer.id}'s Sky Fish!`;
@@ -367,19 +367,13 @@ function initializeGame() {
     winnerFishElement.classList.remove('bonking');
     loserFishElement.classList.add('loser');
 
-    // The attacker's sprite is removed because it either moves or is destroyed.
-    // The defender's sprite is removed because it is either destroyed or replaced by the winner.
-    removeSprite(attackerTile);
-    removeSprite(defenderTile);
-    
     // Update the game state in memory
-    attackerTile.creature = null; // Attacker's original tile is now always empty.
-    defenderTile.creature = winner.creatureData; // The winner's creature data moves to the defender's tile.
-    defenderTile.controller = winner.player.id; // The winner's owner controls the tile.
-	defenderTile.golemImmunityTurns = 2;
+    attackerTile.creature = null;
+    defenderTile.creature = winner.creatureData;
+    defenderTile.controller = winner.player.id;
 
-    // Create the single new sprite for the winner in its final location.
-    createOrUpdateSprite(defenderTile);
+    // The state is now correct. The gameLoop's updateSpritePositions function
+    // will automatically handle removing the old sprites and ensuring the winner's sprite is correct.
 
     await new Promise(resolve => setTimeout(resolve, 2000));
     battlePopup.classList.add('hidden');
@@ -443,6 +437,7 @@ function spawnNewPlayerBoard() {
     const newPlayer = gameState.players[gameState.players.length - 1];
 
     if (gameState.board.size > 0) {
+        // ... (The intelligent edge-finding logic is unchanged and correct)
         const allEmptyEdgeSpots = new Set();
         for (const tile of gameState.board.values()) {
             const neighbors = getNeighbors(tile.q, tile.r);
@@ -451,23 +446,15 @@ function spawnNewPlayerBoard() {
                 if (!gameState.board.has(key)) { allEmptyEdgeSpots.add(key); }
             }
         }
-
         const availableSpots = Array.from(allEmptyEdgeSpots).map(key => { const [q, r] = key.split(',').map(Number); return { q, r }; });
-
-        if (availableSpots.length === 0) {
-            showError("No available space to expand the world!");
-            return;
-        }
-
+        if (availableSpots.length === 0) { showError("No available space to expand the world!"); return; }
         let bestSpawnLocation = null;
         let minPlayerCollisions = Infinity;
         let minNeutralCollisions = Infinity;
-
         for (const spot of availableSpots) {
             let currentPlayerCollisions = 0;
             let currentNeutralCollisions = 0;
             const newBoardRadius = 3;
-
             for (let q = -newBoardRadius; q <= newBoardRadius; q++) {
                 for (let r = Math.max(-newBoardRadius, -q - newBoardRadius); r <= Math.min(newBoardRadius, -q + newBoardRadius); r++) {
                     const checkQ = spot.q + q;
@@ -475,22 +462,18 @@ function spawnNewPlayerBoard() {
                     const checkKey = `${checkQ},${checkR}`;
                     if (gameState.board.has(checkKey)) {
                         if (gameState.board.get(checkKey).controller !== null) {
-                            currentPlayerCollisions++; // This is a critical collision
+                            currentPlayerCollisions++;
                         } else {
-                            currentNeutralCollisions++; // This is an acceptable collision
+                            currentNeutralCollisions++;
                         }
                     }
                 }
             }
-
-            // A spot with fewer player collisions is ALWAYS better.
             if (currentPlayerCollisions < minPlayerCollisions) {
                 minPlayerCollisions = currentPlayerCollisions;
                 minNeutralCollisions = currentNeutralCollisions;
                 bestSpawnLocation = spot;
-            } 
-            // If player collisions are equal, pick the one with fewer neutral collisions.
-            else if (currentPlayerCollisions === minPlayerCollisions) {
+            } else if (currentPlayerCollisions === minPlayerCollisions) {
                 if (currentNeutralCollisions < minNeutralCollisions) {
                     minNeutralCollisions = currentNeutralCollisions;
                     bestSpawnLocation = spot;
@@ -515,11 +498,16 @@ function spawnNewPlayerBoard() {
         const newR = tile.r + anchorPoint.r;
         const newKey = `${newQ},${newR}`;
         
-        // --- The new placement rule ---
-        // Only place a new tile if the spot is empty OR if the existing tile is unowned.
         const existingTile = gameState.board.get(newKey);
         if (!existingTile || existingTile.controller === null) {
-            if (existingTile) { removeSprite(existingTile); } // Remove sprite of the unowned tile
+            if (existingTile) {
+                // --- THIS IS THE DEFINITIVE FIX ---
+                const spriteElementToRemove = document.getElementById(`sprite-${existingTile.q}-${existingTile.r}`);
+                if (spriteElementToRemove) { // Only call removeSprite if the element was found
+                    removeSprite(spriteElementToRemove);
+                }
+                // --- END FIX ---
+            }
             
             const newTileObject = { ...tile, q: newQ, r: newR };
             gameState.board.set(newKey, newTileObject);
@@ -546,45 +534,42 @@ function spawnNewPlayerBoard() {
 	}
 	
 	function updateSpritePositions() {
-		const allCreatureTiles = [...gameState.board.values()].filter(t => t.creature);
-		const existingSpriteIds = new Set();
-	
-		allCreatureTiles.forEach(tile => {
-			const spriteId = `sprite-${tile.q}-${tile.r}`;
-			existingSpriteIds.add(spriteId);
-			let spriteElement = document.getElementById(spriteId);
-	
-			// If the sprite element doesn't exist, create it.
-			// This handles cases where state might change outside of normal functions.
-			if (!spriteElement) {
-				spriteElement = createOrUpdateSprite(tile);
-			}
-	
-			const { x, y, depth } = axialToIsometric(tile.q, tile.r);
-			
-			// We now add the boardView.pan offsets to the sprite's position,
-			// just like we do for the tiles in the main render loop.
-			const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
-			const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
-			const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
-	
-			const screenX = (canvas.width / 2 - centerPixel.x) + x + boardView.pan.x;
-			const screenY = (canvas.height / 2 - centerPixel.y) + y - TILE_HEIGHT + boardView.pan.y;
-	
-			spriteElement.style.left = `${screenX}px`;
-			spriteElement.style.top = `${screenY}px`;
-			spriteElement.style.setProperty('--sprite-size', `${TILE_SIZE.current * 1.2}px`);
-			spriteElement.style.zIndex = Math.round(depth + 1000); // Use depth for more accurate layering
-		});
-	
-		// Clean up any sprites that are on the screen but no longer in the game state
-		const allSpriteElements = document.querySelectorAll('.creature-sprite');
-		allSpriteElements.forEach(spriteEl => {
-			if (!existingSpriteIds.has(spriteEl.id)) {
-				spriteEl.remove();
-			}
-		});
-	}
+    const allCreatureTiles = [...gameState.board.values()].filter(t => t.creature);
+    const existingSpriteIds = new Set();
+
+    // Step 1: Ensure every creature in the state has a sprite on screen.
+    allCreatureTiles.forEach(tile => {
+        const spriteId = `sprite-${tile.q}-${tile.r}`;
+        existingSpriteIds.add(spriteId);
+        let spriteElement = document.getElementById(spriteId);
+
+        // If a creature exists in the state but its sprite doesn't, create it.
+        if (!spriteElement) {
+            spriteElement = createOrUpdateSprite(tile);
+        }
+
+        // Update the position and Z-index of the sprite every frame.
+        const { x, y, depth } = axialToIsometric(tile.q, tile.r);
+        const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
+        const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
+        const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
+        const screenX = (canvas.width / 2 - centerPixel.x) + x + boardView.pan.x;
+        const screenY = (canvas.height / 2 - centerPixel.y) + y - TILE_HEIGHT + boardView.pan.y;
+
+        spriteElement.style.left = `${screenX}px`;
+        spriteElement.style.top = `${screenY}px`;
+        spriteElement.style.setProperty('--sprite-size', `${TILE_SIZE.current * 1.2}px`);
+        spriteElement.style.zIndex = Math.round(depth + 1000);
+    });
+
+    // Step 2: Clean up any orphaned sprites that are on screen but no longer in the state.
+    const allSpriteElements = document.querySelectorAll('.creature-sprite');
+    allSpriteElements.forEach(spriteEl => {
+        if (!existingSpriteIds.has(spriteEl.id)) {
+            removeSprite(spriteEl); // Pass the element directly
+        }
+    });
+}
 	
 	function getSpriteFilename(creatureType) {
 		switch (creatureType) {
@@ -596,48 +581,40 @@ function spawnNewPlayerBoard() {
 	}
 	
 	function createOrUpdateSprite(tile) {
-		if (!tile.creature) return;
+    if (!tile.creature) return null;
+
+    const spriteId = `sprite-${tile.q}-${tile.r}`;
+    let spriteElement = document.getElementById(spriteId);
+
+    if (!spriteElement) {
+        spriteElement = document.createElement('img');
+        spriteElement.id = spriteId;
+        spriteElement.className = 'creature-sprite';
+        spriteElement.src = `assets/${getSpriteFilename(tile.creature.type)}`;
+        
+        const owner = gameState.players.find(p => p.id === tile.creature.ownerId);
+        if (owner) {
+            // Apply a hue shift based on player color (simplified)
+            const hue = (owner.id * 137.5) % 360; // Golden angle for distinct hues
+            spriteElement.style.filter = `sepia(0.5) saturate(4) hue-rotate(${hue}deg) brightness(1.1)`;
+        }
+        
+        spriteContainer.appendChild(spriteElement);
+    }
+    return spriteElement;
+}
 	
-		const spriteId = `sprite-${tile.q}-${tile.r}`;
-		let spriteElement = document.getElementById(spriteId);
-	
-		// If sprite doesn't exist, create it
-		if (!spriteElement) {
-			spriteElement = document.createElement('img');
-			spriteElement.id = spriteId;
-			spriteElement.className = 'creature-sprite';
-			spriteContainer.appendChild(spriteElement);
-		}
-		
-		// Update its source and color
-		spriteElement.src = `assets/${getSpriteFilename(tile.creature.type)}`;
-		const owner = gameState.players.find(p => p.id === tile.creature.ownerId);
-		if (owner) {
-			// This uses CSS filter to re-color the gif.
-			// It's a bit of a hack but works for prototypes.
-			// A real game might use separate colored sprites or a shader.
-			const color = owner.color;
-			const r = parseInt(color.slice(1, 3), 16);
-			const g = parseInt(color.slice(3, 5), 16);
-			const b = parseInt(color.slice(5, 7), 16);
-			
-			// This is a complex filter to achieve hue-shifting.
-			// We'll just apply a simple sepia + hue-rotate for a stylized effect.
-			spriteElement.style.filter = `sepia(1) saturate(5) hue-rotate(${Math.random() * 360}deg) brightness(1.2)`;
-		}
-	}
-	
-	function removeSprite(tile) {
-		const spriteId = `sprite-${tile.q}-${tile.r}`;
-		let spriteElement = document.getElementById(spriteId);
-		if (spriteElement) {
-			spriteElement.classList.add('disappearing');
-			// Remove the element from the DOM after the animation finishes
-			spriteElement.addEventListener('animationend', () => {
-				spriteElement.remove();
-			});
-		}
-	}
+function removeSprite(spriteElement) {
+    // --- THIS IS THE FIX ---
+    // This check ensures we never try to access properties of a null or undefined object.
+    if (spriteElement && spriteElement.classList && !spriteElement.classList.contains('disappearing')) {
+        spriteElement.classList.add('disappearing');
+        spriteElement.addEventListener('animationend', () => {
+            spriteElement.remove();
+        }, { once: true });
+    }
+    // --- END FIX ---
+}
 	
 	function drawRoundedOctagon(ctx, x, y, size, color) {
     const cornerRadius = size * 0.15;
@@ -672,70 +649,58 @@ function spawnNewPlayerBoard() {
 }
 	    
     function updateUI(wasCardDrawn = false) {
-    const player = getCurrentPlayer();
-    
-    // Update top-right and hand header UI
-    cloudShardsElement.textContent = player.cloudShards;
-    currentPlayerElement.textContent = player.id;
-    playerColorIndicator.style.backgroundColor = player.color;
-    handCurrentPlayer.textContent = player.id;
-    handPlayerColorIndicator.style.backgroundColor = player.color;
-    
-    playerHandElement.innerHTML = ''; // Clear the hand completely
-    
-    let cardToAnimateIndex = -1;
-    const isPending = gameState.pendingCard !== null;
-    const handSize = isPending ? player.hand.length + 1 : player.hand.length;
+        const player = getCurrentPlayer();
+        cloudShardsElement.textContent = player.cloudShards;
+        currentPlayerElement.textContent = player.id;
+        playerColorIndicator.style.backgroundColor = player.color;
+        handCurrentPlayer.textContent = player.id;
+        handPlayerColorIndicator.style.backgroundColor = player.color;
+        playerHandElement.innerHTML = '';
+        
+        let cardToAnimateIndex = -1;
+        const handSize = player.hand.length + (gameState.pendingCard ? 1 : 0);
 
-    // We build a temporary array of what to display in the hand
-    const displayItems = [...player.hand];
-    if (isPending) {
-        // If an action is pending, we insert a special "placeholder" object
-        // into our display array at the card's original position.
-        displayItems.splice(gameState.pendingCard.index, 0, { isPlaceholder: true });
-    }
-
-    displayItems.forEach((item, displayIndex) => {
-        const arcAngle = 10;
-        const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
-        const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
-        const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
-
-        if (item.isPlaceholder) {
-            // If it's the placeholder, create the cancel button
-            const placeholder = document.createElement('div');
-            placeholder.id = 'cancel-action-placeholder';
-            placeholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
-            placeholder.style.setProperty('--card-transform', transformStyle); // Apply arc
-            placeholder.onclick = cancelAction;
-            playerHandElement.appendChild(placeholder);
-        } else {
-            // Otherwise, create the card element
-            const card = item;
-            const originalIndex = player.hand.indexOf(card); // Find its real index in the data
-            const el = document.createElement('div');
-            el.className = 'card';
-            el.draggable = true;
-            el.style.setProperty('--card-transform', transformStyle); // Apply arc
-
-            el.innerHTML = `<div class="card-header"><span class="card-name">${card.name}</span><span class="card-cost">${card.cost}</span></div><div class="card-art"></div><div class="card-description">${card.desc}</div>`;
-            
-            el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', originalIndex); setTimeout(() => el.classList.add('dragging'), 0); });
-            el.addEventListener('dragend', () => el.classList.remove('dragging'));
-            el.onclick = () => playCard(player, originalIndex);
-            
-            playerHandElement.appendChild(el);
-
-            if (wasCardDrawn && originalIndex === player.hand.length - 1) {
-                cardToAnimateIndex = displayIndex;
-            }
+        const displayItems = [...player.hand];
+        if (gameState.pendingCard) {
+            displayItems.splice(gameState.pendingCard.index, 0, { isPlaceholder: true });
         }
-    });
-    
-    if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
-        playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+
+        displayItems.forEach((item, displayIndex) => {
+            const arcAngle = 10;
+            const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
+            const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
+            const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
+
+            if (item.isPlaceholder) {
+                const placeholder = document.createElement('div');
+                placeholder.id = 'cancel-action-placeholder';
+                placeholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
+                placeholder.style.setProperty('--card-transform', transformStyle);
+                placeholder.onclick = cancelAction;
+                playerHandElement.appendChild(placeholder);
+            } else {
+                const card = item;
+                const originalIndex = player.hand.indexOf(card);
+                const el = document.createElement('div');
+                el.className = 'card';
+                el.draggable = true;
+                el.style.setProperty('--card-transform', transformStyle);
+                el.innerHTML = `<div class="card-header"><span class="card-name">${card.name}</span><span class="card-cost">${card.cost}</span></div><div class="card-art"></div><div class="card-description">${card.desc}</div>`;
+                el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', originalIndex); setTimeout(() => el.classList.add('dragging'), 0); });
+                el.addEventListener('dragend', () => el.classList.remove('dragging'));
+                el.onclick = () => playCard(player, originalIndex, el);
+                playerHandElement.appendChild(el);
+
+                if (wasCardDrawn && originalIndex === player.hand.length - 1) {
+                    cardToAnimateIndex = displayIndex;
+                }
+            }
+        });
+        
+        if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
+            playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+        }
     }
-}
 
     function generateRandomBoard(radius) {
     // This function now only generates the very first island.
@@ -819,12 +784,46 @@ function spawnNewPlayerBoard() {
     function drawOctagon(ctx, x, y, size, color, isFillOnly = false) { ctx.beginPath(); for (let i = 0; i < 8; i++) { const angle = (Math.PI / 4) * i + (Math.PI / 8); ctx.lineTo(x + size * Math.cos(angle), y + size * Math.sin(angle) * Math.sin(boardView.tilt)); } ctx.closePath(); ctx.fillStyle = color; ctx.fill(); if (!isFillOnly) { ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke(); } }
     function drawController(ctx, q, r) { const { x, y } = axialToIsometric(q, r); const tile = gameState.board.get(`${q},${r}`); const player = gameState.players.find(p => p.id === tile.controller); const color = player ? player.color : '#ffffff'; const topY = y - TILE_HEIGHT; ctx.beginPath(); ctx.arc(x, topY, TILE_SIZE.current * 0.3, 0, 2 * Math.PI); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'white'; ctx.lineWidth = 1.5; ctx.stroke(); }
     function drawCreature(ctx, q, r, type) { const { x, y } = axialToIsometric(q, r); const creatureY = y - TILE_HEIGHT * 1.5; ctx.fillStyle = '#FF4500'; ctx.font = `bold ${TILE_SIZE.current * 0.7}px 'Press Start 2P'`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const initial = type === 'Sky Fish' ? 'F' : type.charAt(0); ctx.fillText(initial, x, creatureY); ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.strokeText(initial, x, creatureY); }
-    function handleBoardClick(event) { if (mouseState.isDown && (event.movementX !== 0 || event.movementY !== 0)) return; if (!gameState.action) return; const { q, r } = pixelToAxial(event.offsetX, event.offsetY); const move = gameState.validMoves.find(m => m.q === q && m.r === r); if (move) { const key = `${q},${r}`; const player = getCurrentPlayer(); if (gameState.pendingCard) { triggerPlayAnimation(playerHandElement.children[gameState.pendingCard.index]); player.hand.splice(gameState.pendingCard.index, 1); } if (gameState.action.type === 'place_tile') { const newTileObject = { q, r, type: gameState.action.tileType, controller: player.id, creature: null }; gameState.board.set(key, newTileObject); newTiles.push({ tile: newTileObject, progress: 0 }); boardDimensions.minQ = Math.min(boardDimensions.minQ, q); boardDimensions.maxQ = Math.max(boardDimensions.maxQ, q); boardDimensions.minR = Math.min(boardDimensions.minR, r); boardDimensions.maxR = Math.max(boardDimensions.maxR, r); resizeAndCalculateTargetSize(); 
-	} else if (gameState.action.type === 'summon_creature') {
-    	const creatureData = { ...gameState.action.creature, ownerId: player.id, uncontrolledTurns: 0 };
-    	gameState.board.get(key).creature = creatureData;
-    	createOrUpdateSprite(gameState.board.get(key));
-} else if (gameState.action.type === 'claim_tile') { gameState.board.get(key).controller = player.id; } else if (gameState.action.type === 'respawn') { const tile = gameState.board.get(key); tile.controller = player.id; } cancelAction(); } else { if (gameState.action) showError("Invalid move!"); } }
+    function handleBoardClick(event) {
+    if (mouseState.isDown && (event.movementX !== 0 || event.movementY !== 0)) return;
+    if (!gameState.action) return;
+    const { q, r } = pixelToAxial(event.offsetX, event.offsetY);
+    const move = gameState.validMoves.find(m => m.q === q && m.r === r);
+    if (move) {
+        const key = `${q},${r}`;
+        const player = getCurrentPlayer();
+
+        // --- FIX: Animate and remove card from hand FIRST ---
+        if (gameState.pendingCard) {
+            triggerPlayAnimation(gameState.pendingCard.card, gameState.pendingCard.rect);
+            player.hand.splice(gameState.pendingCard.index, 1);
+        }
+        
+        // Now, perform the board action
+        if (gameState.action.type === 'place_tile') {
+            const newTileObject = { q, r, type: gameState.action.tileType, controller: player.id, creature: null };
+            gameState.board.set(key, newTileObject);
+            newTiles.push({ tile: newTileObject, progress: 0 });
+            boardDimensions.minQ = Math.min(boardDimensions.minQ, q);
+            boardDimensions.maxQ = Math.max(boardDimensions.maxQ, q);
+            boardDimensions.minR = Math.min(boardDimensions.minR, r);
+            boardDimensions.maxR = Math.max(boardDimensions.maxR, r);
+            resizeAndCalculateTargetSize();
+        } else if (gameState.action.type === 'summon_creature') {
+            gameState.board.get(key).creature = { ...gameState.action.creature, ownerId: player.id };
+        } else if (gameState.action.type === 'claim_tile') {
+            gameState.board.get(key).controller = player.id;
+        } else if (gameState.action.type === 'respawn') {
+            const tile = gameState.board.get(key);
+            tile.controller = player.id;
+        }
+        
+        // Finally, cancel the action and update the UI
+        cancelAction();
+    } else {
+        if (gameState.action) showError("Invalid move!");
+    }
+}
     function pixelToAxial(px, py) {
     const boardCenterX_Q = (boardDimensions.maxQ + boardDimensions.minQ) / 2;
     const boardCenterY_R = (boardDimensions.maxR + boardDimensions.minR) / 2;
@@ -852,10 +851,17 @@ function spawnNewPlayerBoard() {
     return roundToNearestAxial(q, r);
 }
     function startAction(action) { gameState.action = action; calculateValidMoves(); }
-    function cancelAction() { if (gameState.pendingCard) { getCurrentPlayer().cloudShards += gameState.pendingCard.card.cost; }  if (gameState.action && gameState.action.type === 'respawn') {
-        // If they cancel the respawn, reset their counter so they get the option again.
-        getCurrentPlayer().turnsWithNoTiles = 3; 
-    } gameState.action = null; gameState.pendingCard = null; gameState.validMoves = []; rangeHighlights = []; hideChoicePrompt(); updateUI(); }
+    function cancelAction() {
+    if (gameState.pendingCard) {
+        getCurrentPlayer().cloudShards += gameState.pendingCard.card.cost;
+    }
+    gameState.action = null;
+    gameState.pendingCard = null;
+    gameState.validMoves = [];
+    rangeHighlights = [];
+    hideChoicePrompt();
+    updateUI(); // Update UI to show the refunded card
+}
     function calculateValidMoves() { rangeHighlights = []; gameState.validMoves = []; const player = getCurrentPlayer(); if (!gameState.action) return; switch (gameState.action.type) { case 'place_tile': const friendlyTiles = [...gameState.board.values()].filter(t => t.controller === player.id); const validCoords = new Set(); friendlyTiles.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { if (!gameState.board.has(`${n.q},${n.r}`)) validCoords.add(`${n.q},${n.r}`); }); }); gameState.validMoves = [...validCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'summon_creature': const validPlacements = [...gameState.board.values()].filter(t => t.controller === player.id && t.type === gameState.action.targetTile && !t.creature); gameState.validMoves = validPlacements.map(t => ({ q: t.q, r: t.r })); if (gameState.action.creature.type === 'Golem') { if (mouseState.hoveredTile && validPlacements.some(t => t.q === mouseState.hoveredTile.q && t.r === mouseState.hoveredTile.r)) { for (const tile of gameState.board.values()) { if (getDistance(mouseState.hoveredTile, tile) <= 5) { rangeHighlights.push(tile); } } } } break; case 'claim_tile': const friendlyTilesClaim = [...gameState.board.values()].filter(t => t.controller === player.id); const validClaimCoords = new Set(); friendlyTilesClaim.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { const key = `${n.q},${n.r}`; const neighborTile = gameState.board.get(key); if (neighborTile && neighborTile.controller === null) { validClaimCoords.add(key); } }); }); gameState.validMoves = [...validClaimCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'respawn': const unownedTiles = [...gameState.board.values()].filter(t => t.controller === null); gameState.validMoves = unownedTiles.map(t => ({ q: t.q, r: t.r })); break; } }
     function showError(message) { errorMessage.textContent = message; errorPanel.classList.remove('hidden'); errorPanel.classList.add('visible'); setTimeout(() => { errorPanel.classList.remove('visible'); }, 2500); }
     function showChoicePrompt(text, options, callback) { promptTextElement.textContent = text; promptOptionsElement.innerHTML = ''; options.forEach(opt => { const btn = document.createElement('button'); btn.textContent = opt; btn.dataset.type = opt; btn.onclick = () => { hideChoicePrompt(); callback(opt); }; promptOptionsElement.appendChild(btn); }); choicePromptElement.classList.remove('hidden'); }
@@ -865,21 +871,22 @@ function spawnNewPlayerBoard() {
     function getNeighbors(q, r) { return [ { q: q + 1, r: r }, { q: q - 1, r: r }, { q: q, r: r + 1 }, { q: q, r: r - 1 }, { q: q + 1, r: r - 1 }, { q: q - 1, r: r + 1 } ]; }
     function getDistance(tileA, tileB) { const dQ = Math.abs(tileA.q - tileB.q); const dR = Math.abs(tileA.r - tileB.r); const dS = Math.abs((-tileA.q - tileA.r) - (-tileB.q - tileB.r)); return Math.max(dQ, dR, dS); }
     function roundToNearestAxial(q, r) { const s = -q - r; let rq = Math.round(q); let rr = Math.round(r); let rs = Math.round(s); const q_diff = Math.abs(rq - q); const r_diff = Math.abs(rr - r); const s_diff = Math.abs(rs - s); if (q_diff > r_diff && q_diff > s_diff) { rq = -rr - rs; } else if (r_diff > s_diff) { rr = -rq - rs; } return { q: rq, r: rr }; }
-    function triggerPlayAnimation(cardElement) {
-    if (!cardElement) return;
-    const rect = cardElement.getBoundingClientRect();
-    const clone = cardElement.cloneNode(true);
-    clone.classList.remove('newly-drawn');
-    clone.style.position = 'absolute'; // Important for positioning relative to the screen
-    clone.style.left = `${rect.left}px`;
-    clone.style.top = `${rect.top}px`;
-    clone.style.width = `${rect.width}px`;
-    clone.style.height = `${rect.height}px`;
+    function triggerPlayAnimation(cardData, startRect) {
+    if (!cardData || !startRect) return;
 
-    // We append it to the #board-container. Because this container is no longer
-    // in a flex relationship with the hand, it will never cause a layout squish.
+    // Create the clone from scratch using the card data
+    const clone = document.createElement('div');
+    clone.className = 'card';
+    clone.innerHTML = `<div class="card-header"><span class="card-name">${cardData.name}</span><span class="card-cost">${cardData.cost}</span></div><div class="card-art"></div><div class="card-description">${cardData.desc}</div>`;
+
+    const containerRect = boardContainer.getBoundingClientRect();
+    clone.style.position = 'absolute';
+    clone.style.left = `${startRect.left - containerRect.left}px`;
+    clone.style.top = `${startRect.top - containerRect.top}px`;
+    clone.style.width = `${startRect.width}px`;
+    clone.style.height = `${startRect.height}px`;
+
     boardContainer.appendChild(clone);
-
     clone.classList.add('card-playing-animation');
     clone.addEventListener('animationend', () => clone.remove());
 }
