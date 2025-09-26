@@ -21,13 +21,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const battlePopup = document.getElementById('battle-popup');
     const battleFish1 = document.getElementById('battle-fish-1');
     const battleFish2 = document.getElementById('battle-fish-2');
-    const battleResult = document.getElementById('battle-result');
     const tileEffectsContainer = document.getElementById('tile-effects-container');
 	const spriteContainer = document.getElementById('sprite-container');
 	const animationLayer = document.getElementById('animation-layer');
+	const battleResult = document.getElementById('battle-result');
+	const buyTileZone = document.getElementById('buy-tile-zone'); 
+	const buyTileBtn = document.getElementById('buy-tile-btn'); 
+	const cancelActionPlaceholder = document.getElementById('cancel-action-placeholder');
 	const ZOOM_SPEED = 0.001;
 	const MIN_ZOOM_TARGET = 20;
 	const MAX_ZOOM_TARGET = 100;
+	
+	const textures = {
+		Water: new Image(),
+		Forest: new Image(),
+		Mountain: new Image()
+	};
+	textures.Water.src = 'assets/water.png';
+	textures.Forest.src = 'assets/forest.png';
+	textures.Mountain.src = 'assets/mountain.png';
     
     // Animation & View State
     let TILE_SIZE = { current: 0, target: 50 };
@@ -156,12 +168,29 @@ let boardView = {
 	
 			TILE_SIZE.target = Math.max(MIN_ZOOM_TARGET, Math.min(MAX_ZOOM_TARGET, TILE_SIZE.target));
 		});
+		 buyTileBtn.addEventListener('click', () => {
+    const player = getCurrentPlayer();
+    if (gameState.action) {
+        showError("Complete another action first!");
+        return;
+    }
+    if (player.cloudShards >= 100) {
+        // --- THIS IS THE FIX ---
+        // Deduct the cost immediately when the action starts.
+        player.cloudShards -= 100; 
+        startAction({ type: 'buy_tile' });
+        updateUI(); // Update the UI to show the new shard count and hide the button
+        // --- END FIX ---
+    } else {
+        showError("You don't have enough Cloud!");
+    }
+});
         discardZone.addEventListener('dragover', e => { e.preventDefault(); discardZone.classList.add('drag-over'); });
         discardZone.addEventListener('dragleave', () => { discardZone.classList.remove('drag-over'); });
         discardZone.addEventListener('drop', e => { e.preventDefault(); discardZone.classList.remove('drag-over'); const cardIndex = parseInt(e.dataTransfer.getData('text/plain'), 10); if (!isNaN(cardIndex)) { getCurrentPlayer().hand.splice(cardIndex, 1); updateUI(); } });
 		const spawnPlayerBtn = document.getElementById('spawn-player-btn');
 	    spawnPlayerBtn.addEventListener('click', spawnNewPlayer);
-
+	
     }
 
 function initializeGame() {
@@ -205,7 +234,6 @@ function initializeGame() {
     if (player.cloudShards < card.cost) { showError("Not enough Cloud!"); return; }
     if (card.effect.type === 'summon_creature') { const canSummon = [...gameState.board.values()].some(t => t.controller === player.id && t.type === card.effect.targetTile && !t.creature); if (!canSummon) { showError(`No valid ${card.effect.targetTile} tiles available!`); return; } }
     
-    // --- The Core Fix: Capture position BEFORE any UI updates ---
     const rect = cardElement.getBoundingClientRect();
     
     player.cloudShards -= card.cost;
@@ -227,27 +255,45 @@ function initializeGame() {
     updateUI();
 }
 
-    async function endTurn() {
-    if (gameState.pendingCard) { cancelAction(); }
+async function endTurn() {
+    // --- THIS IS THE CRITICAL FIX ---
+    // First, check for and handle any pending actions for the outgoing player.
+    if (gameState.pendingCard) {
+        cancelAction(); // This correctly refunds card costs.
+    }
+    // NEW: Explicitly check for a pending 'buy_tile' action.
+    if (gameState.action && gameState.action.type === 'buy_tile') {
+        const player = getCurrentPlayer();
+        player.cloudShards += 100; // Manually refund the 100 Cloud.
+        
+        // Manually clear the action state without calling the general cancelAction.
+        gameState.action = null;
+        gameState.validMoves = [];
+        rangeHighlights = [];
+        hideChoicePrompt();
+        // We call updateUI later, so no need to call it here.
+    }
+    // --- END OF FIX ---
+
     endTurnBtn.disabled = true;
     clearTimeout(turnTimerInterval);
 
     const outgoingPlayer = getCurrentPlayer();
     const controlledTiles = [...gameState.board.values()].filter(t => t.controller === outgoingPlayer.id).length;
     if (controlledTiles === 0) {
-        outgoingPlayer.turnsWithNoTiles++;
+        if (!outgoingPlayer.turnsWithNoTiles || outgoingPlayer.turnsWithNoTiles < 3) {
+            outgoingPlayer.turnsWithNoTiles++;
+        }
     } else {
         outgoingPlayer.turnsWithNoTiles = 0;
     }
-
+    
     await handleEndOfTurnAbilities(outgoingPlayer);
 
     gameState.currentPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
     const incomingPlayer = getCurrentPlayer();
     
-    // Always draw a card for the new player first
-    const wasCardDrawn = drawCard(incomingPlayer);
-    
+    let wasCardDrawn = false;
     if (incomingPlayer.turnsWithNoTiles >= 3) {
         showError("Mercy of the Clouds!");
         incomingPlayer.cloudShards += 3;
@@ -262,8 +308,8 @@ function initializeGame() {
         incomingPlayer.cloudShards += resourceGain;
     }
     
-    // Now, update the UI with the knowledge of whether a card was successfully drawn
-    updateUI(wasCardDrawn); 
+    wasCardDrawn = drawCard(incomingPlayer);
+    updateUI(wasCardDrawn);
     endTurnBtn.disabled = false;
     startTurnTimer();
 }
@@ -372,13 +418,27 @@ function initializeGame() {
     defenderTile.creature = winner.creatureData;
     defenderTile.controller = winner.player.id;
 
-    // The state is now correct. The gameLoop's updateSpritePositions function
-    // will automatically handle removing the old sprites and ensuring the winner's sprite is correct.
-
     await new Promise(resolve => setTimeout(resolve, 2000));
     battlePopup.classList.add('hidden');
     battleFish1.className = 'battle-fish';
     battleFish2.className = 'battle-fish';
+}
+
+function drawDropShadow(ctx, q, r) {
+    const { x, y } = axialToIsometric(q, r);
+    const shadowSize = TILE_SIZE.current * TAPER_FACTOR; // Shadow should match the widest part
+
+    ctx.save();
+    ctx.translate(x + SHADOW_OFFSET, y + SHADOW_OFFSET);
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+        const angle = (Math.PI / 4) * i + (Math.PI / 8);
+        ctx.lineTo(shadowSize * Math.cos(angle), shadowSize * Math.sin(angle) * Math.sin(boardView.tilt));
+    }
+    ctx.closePath();
+    ctx.fillStyle = TILE_COLORS.Shadow;
+    ctx.fill();
+    ctx.restore();
 }
 
     function startTurnTimer() {
@@ -437,7 +497,6 @@ function spawnNewPlayerBoard() {
     const newPlayer = gameState.players[gameState.players.length - 1];
 
     if (gameState.board.size > 0) {
-        // ... (The intelligent edge-finding logic is unchanged and correct)
         const allEmptyEdgeSpots = new Set();
         for (const tile of gameState.board.values()) {
             const neighbors = getNeighbors(tile.q, tile.r);
@@ -488,7 +547,11 @@ function spawnNewPlayerBoard() {
     for (let q = -newBoardRadius; q <= newBoardRadius; q++) {
         for (let r = Math.max(-newBoardRadius, -q - newBoardRadius); r <= Math.min(newBoardRadius, -q + newBoardRadius); r++) {
             const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)];
-            newBoardTemplate.set(`${q},${r}`, { q, r, type, controller: null, creature: null });
+            newBoardTemplate.set(`${q},${r}`, {
+    q, r, type, controller: null, creature: null,
+    textureSx: Math.floor(Math.random() * (1024 - 175)),
+    textureSy: Math.floor(Math.random() * (1024 - 175))
+});
         }
     }
 
@@ -501,12 +564,10 @@ function spawnNewPlayerBoard() {
         const existingTile = gameState.board.get(newKey);
         if (!existingTile || existingTile.controller === null) {
             if (existingTile) {
-                // --- THIS IS THE DEFINITIVE FIX ---
                 const spriteElementToRemove = document.getElementById(`sprite-${existingTile.q}-${existingTile.r}`);
                 if (spriteElementToRemove) { // Only call removeSprite if the element was found
                     removeSprite(spriteElementToRemove);
                 }
-                // --- END FIX ---
             }
             
             const newTileObject = { ...tile, q: newQ, r: newR };
@@ -605,7 +666,6 @@ function spawnNewPlayerBoard() {
 }
 	
 function removeSprite(spriteElement) {
-    // --- THIS IS THE FIX ---
     // This check ensures we never try to access properties of a null or undefined object.
     if (spriteElement && spriteElement.classList && !spriteElement.classList.contains('disappearing')) {
         spriteElement.classList.add('disappearing');
@@ -613,102 +673,156 @@ function removeSprite(spriteElement) {
             spriteElement.remove();
         }, { once: true });
     }
-    // --- END FIX ---
 }
 	
-	function drawRoundedOctagon(ctx, x, y, size, color) {
+function drawRoundedOctagon(ctx, x, y, size, color, tile) {
     const cornerRadius = size * 0.15;
     const points = [];
     for (let i = 0; i < 8; i++) {
         const angle = (Math.PI / 4) * i + (Math.PI / 8);
-        points.push({
-            x: x + size * Math.cos(angle),
-            y: y + size * Math.sin(angle) * Math.sin(boardView.tilt)
-        });
+        points.push({ x: x + size * Math.cos(angle), y: y + size * Math.sin(angle) * Math.sin(boardView.tilt) });
     }
 
+    // Step 1: Create the rounded octagon path
     ctx.beginPath();
-    ctx.moveTo(
-        (points[0].x + points[7].x) / 2,
-        (points[0].y + points[7].y) / 2
-    );
-
+    ctx.moveTo((points[0].x + points[7].x) / 2, (points[0].y + points[7].y) / 2);
     for (let i = 0; i < 8; i++) {
         const p1 = points[i];
         const p2 = points[(i + 1) % 8];
         ctx.arcTo(p1.x, p1.y, p2.x, p2.y, cornerRadius);
     }
-    
     ctx.closePath();
+    
+    // Step 2: Fill the path with the solid base color first
     ctx.fillStyle = color;
     ctx.fill();
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; // A subtle white stroke
+    // --- THIS IS THE DEFINITIVE FIX ---
+    // Step 3: Draw the texture, using the path as a clipping mask AND applying a transform.
+    const texture = textures[tile.type];
+    if (texture && texture.complete && texture.width > 0) {
+        ctx.save(); // Save the canvas state before we apply the clip and transform
+        ctx.clip(); // Apply the rounded octagon path as a "cookie cutter"
+
+        // Move the canvas origin to the center of the tile.
+        // All subsequent transformations will happen around this point.
+        ctx.translate(x, y);
+
+        // Apply ONLY the vertical squash (tilt) to the texture.
+        // We do NOT apply the rotation, which was the source of the previous bugs.
+        // This makes the texture pivot correctly on the pitch axis.
+        ctx.scale(1, Math.sin(boardView.tilt));
+        
+        ctx.globalAlpha = 0.8;
+        const drawSize = size * 2.2; // Ensure texture is large enough to cover the skewed shape
+        
+        // Draw the texture snippet centered on the new, transformed origin.
+        ctx.drawImage(
+            texture,
+            tile.textureSx, tile.textureSy, 150, 150,
+            -drawSize / 2, -drawSize / 2,
+            drawSize, drawSize
+        );
+        
+        ctx.restore(); // CRITICAL: This removes the clip AND resets the transform.
+    }
+    // --- END OF FIX ---
+    
+    // Step 4: Draw the subtle stroke on top of everything
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 1;
     ctx.stroke();
 }
 	    
-    function updateUI(wasCardDrawn = false) {
-        const player = getCurrentPlayer();
-        cloudShardsElement.textContent = player.cloudShards;
-        currentPlayerElement.textContent = player.id;
-        playerColorIndicator.style.backgroundColor = player.color;
-        handCurrentPlayer.textContent = player.id;
-        handPlayerColorIndicator.style.backgroundColor = player.color;
-        playerHandElement.innerHTML = '';
-        
-        let cardToAnimateIndex = -1;
-        const handSize = player.hand.length + (gameState.pendingCard ? 1 : 0);
-
-        const displayItems = [...player.hand];
-        if (gameState.pendingCard) {
-            displayItems.splice(gameState.pendingCard.index, 0, { isPlaceholder: true });
-        }
-
-        displayItems.forEach((item, displayIndex) => {
-            const arcAngle = 10;
-            const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
-            const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
-            const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
-
-            if (item.isPlaceholder) {
-                const placeholder = document.createElement('div');
-                placeholder.id = 'cancel-action-placeholder';
-                placeholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
-                placeholder.style.setProperty('--card-transform', transformStyle);
-                placeholder.onclick = cancelAction;
-                playerHandElement.appendChild(placeholder);
-            } else {
-                const card = item;
-                const originalIndex = player.hand.indexOf(card);
-                const el = document.createElement('div');
-                el.className = 'card';
-                el.draggable = true;
-                el.style.setProperty('--card-transform', transformStyle);
-                el.innerHTML = `<div class="card-header"><span class="card-name">${card.name}</span><span class="card-cost">${card.cost}</span></div><div class="card-art"></div><div class="card-description">${card.desc}</div>`;
-                el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', originalIndex); setTimeout(() => el.classList.add('dragging'), 0); });
-                el.addEventListener('dragend', () => el.classList.remove('dragging'));
-                el.onclick = () => playCard(player, originalIndex, el);
-                playerHandElement.appendChild(el);
-
-                if (wasCardDrawn && originalIndex === player.hand.length - 1) {
-                    cardToAnimateIndex = displayIndex;
-                }
-            }
-        });
-        
-        if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
-            playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
-        }
+function updateUI(wasCardDrawn = false) {
+    const player = getCurrentPlayer();
+    
+    // Update top-right and hand header UI
+    cloudShardsElement.textContent = player.cloudShards;
+    currentPlayerElement.textContent = player.id;
+    playerColorIndicator.style.backgroundColor = player.color;
+    handCurrentPlayer.textContent = player.id;
+    handPlayerColorIndicator.style.backgroundColor = player.color;
+    
+    playerHandElement.innerHTML = '';
+    
+    let cardToAnimateIndex = -1;
+    const isPending = gameState.pendingCard !== null;
+    const handSize = player.hand.length + (isPending ? 1 : 0);
+	
+	if (player.cloudShards >= 100) {
+        buyTileZone.classList.remove('hidden');
+    } else {
+        buyTileZone.classList.add('hidden');
     }
+
+    const displayItems = [...player.hand];
+    if (isPending) {
+        displayItems.splice(gameState.pendingCard.index, 0, { isPlaceholder: true });
+    }
+
+    displayItems.forEach((item, displayIndex) => {
+        const arcAngle = 10;
+        const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
+        const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
+        const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
+
+        if (item.isPlaceholder) {
+            const placeholder = document.createElement('div');
+            placeholder.id = 'cancel-action-placeholder';
+            placeholder.innerHTML = `<span>Cancel:</span><span style="font-family: var(--font-accent); color: var(--hot-pink);">${gameState.pendingCard.card.name}</span>`;
+            placeholder.style.setProperty('--card-transform', transformStyle);
+            placeholder.onclick = cancelAction;
+            playerHandElement.appendChild(placeholder);
+        } else {
+            const card = item;
+            const originalIndex = player.hand.indexOf(card);
+            const el = document.createElement('div');
+            el.className = 'card';
+            el.draggable = true;
+            el.style.setProperty('--card-transform', transformStyle);
+            
+            // --- NEW ARTWORK LOGIC ---
+            const artName = card.name.toLowerCase().replace(/\s+/g, '-');
+            const artUrl = `assets/${artName}.png`;
+            const bgUrl = `assets/${artName}_background.png`;
+
+            // Set the background image for the entire card
+            el.style.setProperty('--card-bg-url', `url('${bgUrl}')`);
+            
+            // Create an actual <img> tag for the foreground art
+            const artImage = `<img src="${artUrl}" alt="${card.name}">`;
+            // --- END NEW LOGIC ---
+            
+            el.innerHTML = `<div class="card-header"><span class="card-name">${card.name}</span><span class="card-cost">${card.cost}</span></div><div class="card-art">${artImage}</div><div class="card-description">${card.desc}</div>`;
+            
+            el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', originalIndex); setTimeout(() => el.classList.add('dragging'), 0); });
+            el.addEventListener('dragend', () => el.classList.remove('dragging'));
+            el.onclick = () => playCard(player, originalIndex, el);
+            
+            playerHandElement.appendChild(el);
+
+            if (wasCardDrawn && originalIndex === player.hand.length - 1) {
+                cardToAnimateIndex = displayIndex;
+            }
+        }
+    });
+    
+    if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
+        playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+    }
+}
 
     function generateRandomBoard(radius) {
     // This function now only generates the very first island.
     for (let q = -radius; q <= radius; q++) {
         for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) {
             const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)];
-            gameState.board.set(`${q},${r}`, { q, r, type, controller: null, creature: null });
-        }
+            gameState.board.set(`${q},${r}`, {
+    q, r, type, controller: null, creature: null,
+    textureSx: Math.floor(Math.random() * (1024 - 175)), // Random X from texture
+    textureSy: Math.floor(Math.random() * (1024 - 175))  // Random Y from texture
+});}
     }
 }
     function resizeAndCalculateTargetSize() { canvas.width = boardContainer.clientWidth; canvas.height = boardContainer.clientHeight; 
@@ -725,84 +839,82 @@ function removeSprite(spriteElement) {
     const screenY = rotatedZ * Math.sin(boardView.tilt);
     return { x: screenX, y: screenY, depth: rotatedZ };
 }
-    function draw3DTile(ctx, tile, progress = 1) {
+function draw3DTile(ctx, tile, progress = 1) {
     const { x, y } = axialToIsometric(tile.q, tile.r);
-    
     const colorSeed = (tile.q * 0.2 + tile.r * 0.5);
     const hOffset = Math.sin(colorSeed) * 5;
     const lOffset = Math.sin(colorSeed * 2.1) * 3;
-    
     const colors = TILE_COLORS[tile.type];
     const topColor = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset}%)`;
     const sideLight = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 8}%)`;
     const sideDark = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 15}%)`;
-
     const currentHeight = TILE_HEIGHT * progress;
     const currentY = y - (TILE_HEIGHT - currentHeight);
     const topY = currentY - currentHeight;
-
     const gradient = ctx.createLinearGradient(x, topY, x, currentY);
     gradient.addColorStop(0, sideLight);
     gradient.addColorStop(1, sideDark);
-
-    const topSize = TILE_SIZE.current+.1;
-    const bottomSize = TILE_SIZE.current * TAPER_FACTOR; // Calculate the wider base size
-
+    const topSize = TILE_SIZE.current;
+    const bottomSize = TILE_SIZE.current * TAPER_FACTOR;
     for (let i = 0; i < 8; i++) {
         const a1 = (Math.PI / 4) * i + (Math.PI / 8);
         const a2 = (Math.PI / 4) * (i + 1) + (Math.PI / 8);
         ctx.beginPath();
-        // Top vertices use topSize
         ctx.moveTo(x + topSize * Math.cos(a1), topY + topSize * Math.sin(a1) * Math.sin(boardView.tilt));
         ctx.lineTo(x + topSize * Math.cos(a2), topY + topSize * Math.sin(a2) * Math.sin(boardView.tilt));
-        // Bottom vertices use the wider bottomSize
         ctx.lineTo(x + bottomSize * Math.cos(a2), currentY + bottomSize * Math.sin(a2) * Math.sin(boardView.tilt));
         ctx.lineTo(x + bottomSize * Math.cos(a1), currentY + bottomSize * Math.sin(a1) * Math.sin(boardView.tilt));
         ctx.closePath();
         ctx.fillStyle = gradient;
         ctx.fill();
     }
-    
-    drawRoundedOctagon(ctx, x, topY, topSize, topColor);
+    // This line is now changed to pass the whole tile object
+    drawRoundedOctagon(ctx, x, topY, topSize, topColor, tile);
 }
-    function drawDropShadow(ctx, q, r) {
-    const { x, y } = axialToIsometric(q, r);
-    const shadowSize = TILE_SIZE.current * TAPER_FACTOR; // Shadow should match the widest part
 
-    ctx.save();
-    ctx.translate(x + SHADOW_OFFSET, y + SHADOW_OFFSET);
-    ctx.beginPath();
-    for (let i = 0; i < 8; i++) {
-        const angle = (Math.PI / 4) * i + (Math.PI / 8);
-        ctx.lineTo(shadowSize * Math.cos(angle), shadowSize * Math.sin(angle) * Math.sin(boardView.tilt));
-    }
-    ctx.closePath();
-    ctx.fillStyle = TILE_COLORS.Shadow;
-    ctx.fill();
-    ctx.restore();
-}
     function drawOctagon(ctx, x, y, size, color, isFillOnly = false) { ctx.beginPath(); for (let i = 0; i < 8; i++) { const angle = (Math.PI / 4) * i + (Math.PI / 8); ctx.lineTo(x + size * Math.cos(angle), y + size * Math.sin(angle) * Math.sin(boardView.tilt)); } ctx.closePath(); ctx.fillStyle = color; ctx.fill(); if (!isFillOnly) { ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke(); } }
     function drawController(ctx, q, r) { const { x, y } = axialToIsometric(q, r); const tile = gameState.board.get(`${q},${r}`); const player = gameState.players.find(p => p.id === tile.controller); const color = player ? player.color : '#ffffff'; const topY = y - TILE_HEIGHT; ctx.beginPath(); ctx.arc(x, topY, TILE_SIZE.current * 0.3, 0, 2 * Math.PI); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'white'; ctx.lineWidth = 1.5; ctx.stroke(); }
     function drawCreature(ctx, q, r, type) { const { x, y } = axialToIsometric(q, r); const creatureY = y - TILE_HEIGHT * 1.5; ctx.fillStyle = '#FF4500'; ctx.font = `bold ${TILE_SIZE.current * 0.7}px 'Press Start 2P'`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const initial = type === 'Sky Fish' ? 'F' : type.charAt(0); ctx.fillText(initial, x, creatureY); ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.strokeText(initial, x, creatureY); }
-    function handleBoardClick(event) {
+function handleBoardClick(event) {
     if (mouseState.isDown && (event.movementX !== 0 || event.movementY !== 0)) return;
     if (!gameState.action) return;
     const { q, r } = pixelToAxial(event.offsetX, event.offsetY);
     const move = gameState.validMoves.find(m => m.q === q && m.r === r);
+
     if (move) {
         const key = `${q},${r}`;
         const player = getCurrentPlayer();
 
-        // --- FIX: Animate and remove card from hand FIRST ---
+        // --- THIS IS THE CRITICAL FIX ---
+        // This block now contains its own logic to complete the action
+        // without ever calling the refunding cancelAction() function.
+        if (gameState.action.type === 'buy_tile') {
+            // Step 1: Update the game state. The cost was already paid.
+            gameState.board.get(key).controller = player.id;
+            
+            // Step 2: Manually clear the action state, as the action is now complete.
+            gameState.action = null;
+            gameState.validMoves = [];
+            rangeHighlights = [];
+            
+            // Step 3: Update the UI to reflect the new board state.
+            updateUI();
+            return; // Exit the function immediately.
+        }
+        // --- END OF FIX ---
+
+        // This code below will now only run for card-based actions
         if (gameState.pendingCard) {
             triggerPlayAnimation(gameState.pendingCard.card, gameState.pendingCard.rect);
             player.hand.splice(gameState.pendingCard.index, 1);
         }
         
-        // Now, perform the board action
         if (gameState.action.type === 'place_tile') {
-            const newTileObject = { q, r, type: gameState.action.tileType, controller: player.id, creature: null };
-            gameState.board.set(key, newTileObject);
+            const newTileObject = {
+    q, r, type: gameState.action.tileType, controller: player.id, creature: null,
+    textureSx: Math.floor(Math.random() * (1024 - 175)),
+    textureSy: Math.floor(Math.random() * (1024 - 175))
+};gameState.board.set(key, newTileObject);
             newTiles.push({ tile: newTileObject, progress: 0 });
             boardDimensions.minQ = Math.min(boardDimensions.minQ, q);
             boardDimensions.maxQ = Math.max(boardDimensions.maxQ, q);
@@ -810,7 +922,7 @@ function removeSprite(spriteElement) {
             boardDimensions.maxR = Math.max(boardDimensions.maxR, r);
             resizeAndCalculateTargetSize();
         } else if (gameState.action.type === 'summon_creature') {
-            gameState.board.get(key).creature = { ...gameState.action.creature, ownerId: player.id };
+            gameState.board.get(key).creature = { ...gameState.action.creature, ownerId: player.id, uncontrolledTurns: 0 };
         } else if (gameState.action.type === 'claim_tile') {
             gameState.board.get(key).controller = player.id;
         } else if (gameState.action.type === 'respawn') {
@@ -818,7 +930,7 @@ function removeSprite(spriteElement) {
             tile.controller = player.id;
         }
         
-        // Finally, cancel the action and update the UI
+        // This will only be called for card actions, NOT for buy_tile actions.
         cancelAction();
     } else {
         if (gameState.action) showError("Invalid move!");
@@ -851,18 +963,38 @@ function removeSprite(spriteElement) {
     return roundToNearestAxial(q, r);
 }
     function startAction(action) { gameState.action = action; calculateValidMoves(); }
-    function cancelAction() {
+function cancelAction() {
+    const player = getCurrentPlayer();
     if (gameState.pendingCard) {
-        getCurrentPlayer().cloudShards += gameState.pendingCard.card.cost;
+        player.cloudShards += gameState.pendingCard.card.cost;
     }
+    // --- FIX: Correctly refund a "buy tile" action ONLY if it was genuinely cancelled ---
+    if (gameState.action && gameState.action.type === 'buy_tile') {
+        player.cloudShards += 100;
+    }
+
     gameState.action = null;
     gameState.pendingCard = null;
     gameState.validMoves = [];
     rangeHighlights = [];
     hideChoicePrompt();
-    updateUI(); // Update UI to show the refunded card
+    updateUI();
 }
-    function calculateValidMoves() { rangeHighlights = []; gameState.validMoves = []; const player = getCurrentPlayer(); if (!gameState.action) return; switch (gameState.action.type) { case 'place_tile': const friendlyTiles = [...gameState.board.values()].filter(t => t.controller === player.id); const validCoords = new Set(); friendlyTiles.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { if (!gameState.board.has(`${n.q},${n.r}`)) validCoords.add(`${n.q},${n.r}`); }); }); gameState.validMoves = [...validCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'summon_creature': const validPlacements = [...gameState.board.values()].filter(t => t.controller === player.id && t.type === gameState.action.targetTile && !t.creature); gameState.validMoves = validPlacements.map(t => ({ q: t.q, r: t.r })); if (gameState.action.creature.type === 'Golem') { if (mouseState.hoveredTile && validPlacements.some(t => t.q === mouseState.hoveredTile.q && t.r === mouseState.hoveredTile.r)) { for (const tile of gameState.board.values()) { if (getDistance(mouseState.hoveredTile, tile) <= 5) { rangeHighlights.push(tile); } } } } break; case 'claim_tile': const friendlyTilesClaim = [...gameState.board.values()].filter(t => t.controller === player.id); const validClaimCoords = new Set(); friendlyTilesClaim.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { const key = `${n.q},${n.r}`; const neighborTile = gameState.board.get(key); if (neighborTile && neighborTile.controller === null) { validClaimCoords.add(key); } }); }); gameState.validMoves = [...validClaimCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'respawn': const unownedTiles = [...gameState.board.values()].filter(t => t.controller === null); gameState.validMoves = unownedTiles.map(t => ({ q: t.q, r: t.r })); break; } }
+    function calculateValidMoves() { rangeHighlights = []; gameState.validMoves = []; const player = getCurrentPlayer(); if (!gameState.action) return; switch (gameState.action.type) { case 'place_tile': const friendlyTiles = [...gameState.board.values()].filter(t => t.controller === player.id); const validCoords = new Set(); friendlyTiles.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { if (!gameState.board.has(`${n.q},${n.r}`)) validCoords.add(`${n.q},${n.r}`); }); }); gameState.validMoves = [...validCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'summon_creature': const validPlacements = [...gameState.board.values()].filter(t => t.controller === player.id && t.type === gameState.action.targetTile && !t.creature); gameState.validMoves = validPlacements.map(t => ({ q: t.q, r: t.r })); if (gameState.action.creature.type === 'Golem') { if (mouseState.hoveredTile && validPlacements.some(t => t.q === mouseState.hoveredTile.q && t.r === mouseState.hoveredTile.r)) { for (const tile of gameState.board.values()) { if (getDistance(mouseState.hoveredTile, tile) <= 5) { rangeHighlights.push(tile); } } } } break; case 'buy_tile':
+    const friendlyTilesForBuy = [...gameState.board.values()].filter(t => t.controller === player.id);
+    const validBuyCoords = new Set();
+    friendlyTilesForBuy.forEach(tile => {
+        getNeighbors(tile.q, tile.r).forEach(n => {
+            const key = `${n.q},${n.r}`;
+            const neighborTile = gameState.board.get(key);
+            // The tile must exist and be unowned (like Pioneer)
+            if (neighborTile && neighborTile.controller === null) {
+                validBuyCoords.add(key);
+            }
+        });
+    });
+    gameState.validMoves = [...validBuyCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) }));
+    break; case 'claim_tile': const friendlyTilesClaim = [...gameState.board.values()].filter(t => t.controller === player.id); const validClaimCoords = new Set(); friendlyTilesClaim.forEach(tile => { getNeighbors(tile.q, tile.r).forEach(n => { const key = `${n.q},${n.r}`; const neighborTile = gameState.board.get(key); if (neighborTile && neighborTile.controller === null) { validClaimCoords.add(key); } }); }); gameState.validMoves = [...validClaimCoords].map(s => ({ q: Number(s.split(',')[0]), r: Number(s.split(',')[1]) })); break; case 'respawn': const unownedTiles = [...gameState.board.values()].filter(t => t.controller === null); gameState.validMoves = unownedTiles.map(t => ({ q: t.q, r: t.r })); break; } }
     function showError(message) { errorMessage.textContent = message; errorPanel.classList.remove('hidden'); errorPanel.classList.add('visible'); setTimeout(() => { errorPanel.classList.remove('visible'); }, 2500); }
     function showChoicePrompt(text, options, callback) { promptTextElement.textContent = text; promptOptionsElement.innerHTML = ''; options.forEach(opt => { const btn = document.createElement('button'); btn.textContent = opt; btn.dataset.type = opt; btn.onclick = () => { hideChoicePrompt(); callback(opt); }; promptOptionsElement.appendChild(btn); }); choicePromptElement.classList.remove('hidden'); }
     function hideChoicePrompt() { choicePromptElement.classList.add('hidden'); }

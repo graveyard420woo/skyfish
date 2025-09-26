@@ -64,6 +64,7 @@ body { font-family: var(--font-primary); background-image: url('bg.png');}
     align-items: center;
     justify-content: center;
     background-color: #1a1a1a;
+	background-image: url('assets/discard_background.png');
     border-right: 2px solid var(--border-color);
     font-family: var(--font-primary);
     font-size: 20px;
@@ -73,9 +74,61 @@ body { font-family: var(--font-primary); background-image: url('bg.png');}
     z-index: 11; /* Ensure it's above the hand but below popups */
 }
 #discard-zone.drag-over { background-color: var(--hot-pink); color: var(--text-light); box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
+#buy-tile-zone {
+    width: 140px; /* A little wider */
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(-85deg, var(--hot-pink), var(--cyan-accent));
+    font-family: var(--font-primary);
+    text-align: center;
+    padding: 10px;
+    box-sizing: border-box;
+	border-radius: 4px;
+    transition: all 0.4s ease-in-out; /* Slower, smoother transition */
+    transform: translateX(100%); /* Start off-screen */
+    opacity: 0;
+    box-shadow: -5px 0 15px rgba(255, 0, 127, 0.5);
+}
+#buy-tile-zone:not(.hidden) {
+    transform: translateX(0%);
+    opacity: 1;
+}
+#buy-tile-zone span {
+    font-size: 14px;
+    letter-spacing: 1px;
+    color: var(--dark-bg);
+    margin-bottom: 10px;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px rgba(255,255,255,0.3);
+}
 
+#buy-tile-btn {
+    background-color: rgba(0,0,0,0.3);
+    color: var(--text-light);
+    border: 1px solid rgba(255,255,255,0.5);
+    font-family: var(--font-primary);
+    font-size: 12px;
+    padding: 10px;
+    width: 100%;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease-out;
+}
+
+#buy-tile-btn:hover {
+    background-color: #d91462;
+    transform: scale(1.05);
+}
 /* --- Card Redesign & Animations --- */
-.card { width: 180px; height: 100%; max-height: 200px; background: linear-gradient(-45deg, #1d141d, #3c2d3c); border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease-out; cursor: pointer; position: relative; box-shadow: inset 0 0 2px rgba(0, 246, 255, 0.3), 0 2px 5px rgba(0,0,0,0.3); padding: 10px;  transition: all 0.2s ease-out;
+.card { width: 180px; height: 100%; max-height: 200px; 
+background: linear-gradient(-45deg, #1d141d, #3c2d3c); /* This will be the fallback */
+    background-size: cover; /* Ensure the background image covers the whole card */
+    background-position: center;
+    background-image: var(--card-bg-url); /* Set the background image via JS */ 
+border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease-out; cursor: pointer; position: relative; box-shadow: inset 0 0 2px rgba(0, 246, 255, 0.3), 0 2px 5px rgba(0,0,0,0.3); padding: 10px;  transition: all 0.2s ease-out;
     transform: var(--card-transform);}
 .card:hover { transform: translateY(-15px) scale(1.05); border-color: var(--cyan-accent); }
 .card.dragging { opacity: 0.5; transform: scale(0.95); }
@@ -88,7 +141,17 @@ body { font-family: var(--font-primary); background-image: url('bg.png');}
 .card-header { display: flex; justify-content: space-between; align-items: baseline; }
 .card-name { font-family: var(--font-primary); font-size: 16px; color: var(--text-light); text-shadow: 0 0 5px var(--cyan-accent); }
 .card-cost { font-family: var(--font-accent); font-size: 28px; color: var(--hot-pink); }
-.card-art { height: 70px; background: rgba(0,0,0,0.2); border: 1px dashed var(--border-color); border-radius: 4px; margin: 10px 0; }
+.card-art {
+    height: 70px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+.card-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; 
+    border-radius: 4px;
+}
 .card-description { font-family: var(--font-primary); font-size: 14px; text-align: right; line-height: 1.3; color: var(--cyan-accent); }
 #cancel-action-placeholder {
     width: 180px;
