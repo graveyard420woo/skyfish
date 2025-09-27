@@ -132,14 +132,30 @@ let boardView = {
         ctx.fillStyle = `rgba(255, 204, 0, ${0.3 * flash})`;
         rangeHighlights.forEach(tile => { const { x, y } = axialToIsometric(tile.q, tile.r); drawOctagon(ctx, x, y, TILE_SIZE.current, null, true); });
         gameState.validMoves.forEach(move => { const { x, y } = axialToIsometric(move.q, move.r); drawOctagon(ctx, x, y, TILE_SIZE.current, TILE_COLORS.Highlight, true); });
+		 if (gameState.action && mouseState.hoveredTile) {
+        const isHoveredTileValid = gameState.validMoves.some(
+            move => move.q === mouseState.hoveredTile.q && move.r === mouseState.hoveredTile.r
+        );
+
+        if (isHoveredTileValid) {
+            // Create a smooth pulsing effect using a sine wave
+            const hoverFlash = (Math.sin(Date.now() / 150) + 1) / 2; // Oscillates between 0 and 1
+            const flashOpacity = 0.2 + hoverFlash * 0.3; // Varies between 0.2 and 0.5 alpha
+            ctx.fillStyle = `rgba(255, 255, 255, ${flashOpacity})`;
+
+            const { x, y } = axialToIsometric(mouseState.hoveredTile.q, mouseState.hoveredTile.r);
+            // Re-draw the octagon on top with the blinking white fill
+            drawOctagon(ctx, x, y, TILE_SIZE.current, null, true);
+        }
+    }
         projectiles.forEach(p => { const startPos = axialToIsometric(p.start.q, p.start.r); const endPos = axialToIsometric(p.end.q, p.end.r); const currentX = startPos.x + (endPos.x - startPos.x) * p.progress; const currentY = startPos.y + (endPos.y - startPos.y) * p.progress - (TILE_HEIGHT * 2); const arc = Math.sin(p.progress * Math.PI) * TILE_SIZE.current * 1.5; for (let i = 0; i < 5; i++) { const tailProgress = p.progress - i * 0.02; if (tailProgress > 0) { const tailX = startPos.x + (endPos.x - startPos.x) * tailProgress; const tailY = startPos.y + (endPos.y - startPos.y) * tailProgress - (TILE_HEIGHT * 2); const tailArc = Math.sin(tailProgress * Math.PI) * TILE_SIZE.current * 1.5; const size = TILE_SIZE.current * 0.1 * (1 - i * 0.15); const opacity = 1 - tailProgress; ctx.fillStyle = `rgba(255, 85, 0, ${opacity})`; ctx.beginPath(); ctx.arc(tailX, tailY - tailArc, size, 0, Math.PI * 2); ctx.fill(); } } ctx.fillStyle = '#ffaa00'; ctx.beginPath(); ctx.arc(currentX, currentY - arc, TILE_SIZE.current * 0.15, 0, Math.PI * 2); ctx.fill(); });
         flyUpTexts.forEach(t => { ctx.font = `bold ${TILE_SIZE.current * 0.8}px 'Silkscreen'`; ctx.textAlign = 'center'; ctx.fillStyle = `rgba(0, 246, 255, ${1 - t.progress})`; ctx.strokeStyle = `rgba(0, 0, 0, ${1 - t.progress})`; ctx.lineWidth = 2; ctx.strokeText(t.text, t.x, t.y + t.yOffset); ctx.fillText(t.text, t.x, t.y + t.yOffset); });
         ctx.restore();
     }
 
     function setupInputControls() {
-        canvas.addEventListener('mousedown', e => { mouseState.isDown = true; mouseState.lastX = e.clientX; mouseState.lastY = e.clientY; boardContainer.classList.add('grabbing'); });
-        window.addEventListener('mouseup', () => { mouseState.isDown = false; boardContainer.classList.remove('grabbing'); });
+        canvas.addEventListener('mousedown', e => { mouseState.isDown = true; mouseState.lastX = e.clientX; mouseState.lastY = e.clientY; handContainer.classList.add('grabbing'); });
+        window.addEventListener('mouseup', () => { mouseState.isDown = false; handContainer.classList.remove('grabbing'); });
 		canvas.addEventListener('mousemove', e => {
 			if (mouseState.isDown && e.buttons === 1) { // Left-click drag
 			const dx = e.clientX - mouseState.lastX;
@@ -195,7 +211,7 @@ let boardView = {
 
 function initializeGame() {
     gameState = {
-        players: [], // Start with an empty array
+        players: [],
         currentPlayerIndex: 0,
         board: new Map(),
         action: null,
@@ -204,15 +220,46 @@ function initializeGame() {
         turn: 1
     };
     
-    // Create Player 1
+    // --- Create Player 1 and Spawn Their Board ---
     const player1 = { id: 1, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[0], turnsWithNoTiles: 0 };
     gameState.players.push(player1);
-    spawnNewPlayerBoard(); // Spawn the first board at the center
+    
+    // Generate the first island template
+    const firstBoardRadius = 3;
+    const firstBoardTemplate = new Map();
+    for (let q = -firstBoardRadius; q <= firstBoardRadius; q++) {
+        for (let r = Math.max(-firstBoardRadius, -q - firstBoardRadius); r <= Math.min(firstBoardRadius, -q + firstBoardRadius); r++) {
+            const type = TILE_TYPES[Math.floor(Math.random() * TILE_TYPES.length)];
+            firstBoardTemplate.set(`${q},${r}`, { q, r, type, controller: null, creature: null, textureSx: Math.floor(Math.random() * (1024 - 150)), textureSy: Math.floor(Math.random() * (1024 - 150)) });
+        }
+    }
+    // Place the first island at the center of the world
+    const firstIslandTiles = [];
+    for (const [key, tile] of firstBoardTemplate.entries()) {
+        gameState.board.set(key, tile);
+        firstIslandTiles.push(tile);
+    }
+    
+    // --- FIX: Find a random EDGE tile for Player 1's start ---
+    const edgeTiles = firstIslandTiles.filter(tile => {
+        const neighbors = getNeighbors(tile.q, tile.r);
+        // An edge tile on a solo board has fewer than 6 neighbors within the board radius
+        return neighbors.filter(n => getDistance({q:0,r:0}, n) <= firstBoardRadius).length < 6;
+    });
 
-    // Create Player 2
-    const player2 = { id: 2, id: 2, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[1], turnsWithNoTiles: 0 };
+    if (edgeTiles.length > 0) {
+        const startTile = edgeTiles[Math.floor(Math.random() * edgeTiles.length)];
+        startTile.controller = player1.id;
+    } else {
+        // Fallback for a tiny board with no clear edges
+        firstIslandTiles[0].controller = player1.id;
+    }
+    // --- END FIX ---
+
+    // --- Create Player 2 and Spawn Their Board ---
+    const player2 = { id: 2, hand: [], deck: [], cloudShards: 1, color: PRETTY_COLORS[1], turnsWithNoTiles: 0 };
     gameState.players.push(player2);
-    spawnNewPlayerBoard(); // Spawn the second board connected to the first
+    spawnNewPlayerBoard(); // This function already correctly finds the best spot for P2
 
     // Draw initial hands for the first two players
     drawCard(player1); drawCard(player1); drawCard(player1);
@@ -258,20 +305,17 @@ function initializeGame() {
 async function endTurn() {
     // --- THIS IS THE CRITICAL FIX ---
     // First, check for and handle any pending actions for the outgoing player.
-    if (gameState.pendingCard) {
-        cancelAction(); // This correctly refunds card costs.
-    }
-    // NEW: Explicitly check for a pending 'buy_tile' action.
-    if (gameState.action && gameState.action.type === 'buy_tile') {
-        const player = getCurrentPlayer();
-        player.cloudShards += 100; // Manually refund the 100 Cloud.
-        
-        // Manually clear the action state without calling the general cancelAction.
-        gameState.action = null;
-        gameState.validMoves = [];
-        rangeHighlights = [];
-        hideChoicePrompt();
-        // We call updateUI later, so no need to call it here.
+    if (gameState.action && gameState.action.type === 'respawn') {
+        const playerWhoFailed = getCurrentPlayer();
+        // Preserve their mercy state for their next turn.
+        playerWhoFailed.turnsWithNoTiles = 3;
+        // Now, cancel the action cleanly before the turn changes.
+        cancelAction();
+    } else if (gameState.pendingCard) {
+        // If it wasn't a respawn, cancel any pending card action.
+        cancelAction();
+    } else if (gameState.action) {
+        cancelAction();
     }
     // --- END OF FIX ---
 
@@ -280,7 +324,10 @@ async function endTurn() {
 
     const outgoingPlayer = getCurrentPlayer();
     const controlledTiles = [...gameState.board.values()].filter(t => t.controller === outgoingPlayer.id).length;
+
+    // This logic now runs AFTER we've checked for a failed respawn.
     if (controlledTiles === 0) {
+        // Only increment if they are not already in a mercy state.
         if (!outgoingPlayer.turnsWithNoTiles || outgoingPlayer.turnsWithNoTiles < 3) {
             outgoingPlayer.turnsWithNoTiles++;
         }
@@ -297,7 +344,7 @@ async function endTurn() {
     if (incomingPlayer.turnsWithNoTiles >= 3) {
         showError("Mercy of the Clouds!");
         incomingPlayer.cloudShards += 3;
-        incomingPlayer.turnsWithNoTiles = 0;
+        incomingPlayer.turnsWithNoTiles = 0; // Consume the mercy state
         startAction({ type: 'respawn' });
     } else {
         let resourceGain = [...gameState.board.values()].filter(t => t.controller === incomingPlayer.id).length;
@@ -350,7 +397,31 @@ async function endTurn() {
     for (const golemTile of golems) { const opponentTiles = [...gameState.board.values()].filter(t => t.controller && t.controller !== player.id && getDistance(golemTile, t) <= 5 && (!t.golemImmunityTurns || t.golemImmunityTurns <= 0)); if (opponentTiles.length > 0) { const targetTile = opponentTiles[Math.floor(Math.random() * opponentTiles.length)]; projectiles.push({ start: golemTile, end: targetTile, progress: 0 }); } }
 
     const dryads = [...gameState.board.values()].filter(t => t.creature && t.creature.ownerId === player.id && t.creature.type === 'Dryad');
-    for (const dryadTile of dryads) { const emptyNeighbors = getNeighbors(dryadTile.q, dryadTile.r).filter(n => !gameState.board.has(`${n.q},${n.r}`)); for (let i = 0; i < 2 && emptyNeighbors.length > 0; i++) { const newTilePos = emptyNeighbors.splice(Math.floor(Math.random() * emptyNeighbors.length), 1)[0]; const newTileObject = { q: newTilePos.q, r: newTilePos.r, type: 'Forest', controller: null, creature: null }; gameState.board.set(`${newTilePos.q},${newTilePos.r}`, newTileObject); newTiles.push({ tile: newTileObject, progress: 0 }); boardExpanded = true; } }
+    for (const dryadTile of dryads) {
+    const emptyNeighbors = getNeighbors(dryadTile.q, dryadTile.r).filter(n => !gameState.board.has(`${n.q},${n.r}`));
+    for (let i = 0; i < 2 && emptyNeighbors.length > 0; i++) {
+        const newTilePos = emptyNeighbors.splice(Math.floor(Math.random() * emptyNeighbors.length), 1)[0];
+        
+        // --- THIS IS THE NEW LOGIC ---
+        // 50% chance for the new tile to be owned by the current player
+        const controller = Math.random() < 0.5 ? player.id : null; 
+        
+        const newTileObject = {
+            q: newTilePos.q,
+            r: newTilePos.r,
+            type: 'Forest',
+            controller: controller, // Use the new controller variable
+            creature: null,
+            textureSx: Math.floor(Math.random() * (1024 - 150)),
+            textureSy: Math.floor(Math.random() * (1024 - 150))
+        };
+        // --- END OF NEW LOGIC ---
+
+        gameState.board.set(`${newTilePos.q},${newTilePos.r}`, newTileObject);
+        newTiles.push({ tile: newTileObject, progress: 0 });
+        boardExpanded = true;
+    }
+}
     
     // --- Step 3: Handle all "upkeep" effects for the current player's creatures ---
     const allPlayerCreatures = [...gameState.board.values()].filter(t => t.creature && t.creature.ownerId === player.id);
@@ -577,9 +648,50 @@ function spawnNewPlayerBoard() {
         }
     }
     
-    if (tilesForNewPlayer.length > 0) {
-        const startTile = tilesForNewPlayer[Math.floor(Math.random() * tilesForNewPlayer.length)];
-        startTile.controller = newPlayer.id;
+     if (tilesForNewPlayer.length > 0) {
+        let bestStartTile = null;
+        let maxMinDistance = -1;
+
+        // Step 1: Filter for only the edge tiles of the new island.
+        const edgeTiles = tilesForNewPlayer.filter(tile => {
+            const neighbors = getNeighbors(tile.q, tile.r);
+            // An edge tile has at least one neighbor that doesn't exist on the board.
+            return neighbors.some(n => !gameState.board.has(`${n.q},${n.r}`));
+        });
+        
+        // Use all new tiles as a fallback if no edge tiles are found (unlikely).
+        const candidateTiles = edgeTiles.length > 0 ? edgeTiles : tilesForNewPlayer;
+        const otherPlayerTiles = [...gameState.board.values()].filter(t => t.controller !== null && t.controller !== newPlayer.id);
+
+        // Step 2: For each candidate tile, find its minimum distance to any existing player.
+        for (const candidate of candidateTiles) {
+            let minDistance = Infinity;
+            if (otherPlayerTiles.length === 0) {
+                // If there are no other players, any edge is fine.
+                bestStartTile = candidate;
+                break;
+            }
+            for (const otherTile of otherPlayerTiles) {
+                const dist = getDistance(candidate, otherTile);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                }
+            }
+
+            // Step 3: We want the tile that has the largest minimum distance.
+            if (minDistance > maxMinDistance) {
+                maxMinDistance = minDistance;
+                bestStartTile = candidate;
+            }
+        }
+
+        // Step 4: Assign the best found tile to the new player.
+        if (bestStartTile) {
+            bestStartTile.controller = newPlayer.id;
+        } else {
+            // Fallback in case no tile is found (should not happen).
+            tilesForNewPlayer[0].controller = newPlayer.id;
+        }
     }
 }
     
@@ -872,7 +984,7 @@ function draw3DTile(ctx, tile, progress = 1) {
     drawRoundedOctagon(ctx, x, topY, topSize, topColor, tile);
 }
 
-    function drawOctagon(ctx, x, y, size, color, isFillOnly = false) { ctx.beginPath(); for (let i = 0; i < 8; i++) { const angle = (Math.PI / 4) * i + (Math.PI / 8); ctx.lineTo(x + size * Math.cos(angle), y + size * Math.sin(angle) * Math.sin(boardView.tilt)); } ctx.closePath(); ctx.fillStyle = color; ctx.fill(); if (!isFillOnly) { ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke(); } }
+    function drawOctagon(ctx, x, y, size, color, isFillOnly = false) { ctx.beginPath(); for (let i = 0; i < 8; i++) { const angle = (Math.PI / 4) * i + (Math.PI / 8); ctx.lineTo(x + size * Math.cos(angle), y + size * Math.sin(angle) * Math.sin(boardView.tilt)); } ctx.closePath(); ctx.fillStyle = color; ctx.fill(); if (!isFillOnly) { ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; ctx.stroke(); } }
     function drawController(ctx, q, r) { const { x, y } = axialToIsometric(q, r); const tile = gameState.board.get(`${q},${r}`); const player = gameState.players.find(p => p.id === tile.controller); const color = player ? player.color : '#ffffff'; const topY = y - TILE_HEIGHT; ctx.beginPath(); ctx.arc(x, topY, TILE_SIZE.current * 0.3, 0, 2 * Math.PI); ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = 'white'; ctx.lineWidth = 1.5; ctx.stroke(); }
     function drawCreature(ctx, q, r, type) { const { x, y } = axialToIsometric(q, r); const creatureY = y - TILE_HEIGHT * 1.5; ctx.fillStyle = '#FF4500'; ctx.font = `bold ${TILE_SIZE.current * 0.7}px 'Press Start 2P'`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; const initial = type === 'Sky Fish' ? 'F' : type.charAt(0); ctx.fillText(initial, x, creatureY); ctx.strokeStyle = 'white'; ctx.lineWidth = 2; ctx.strokeText(initial, x, creatureY); }
 function handleBoardClick(event) {
@@ -885,36 +997,23 @@ function handleBoardClick(event) {
         const key = `${q},${r}`;
         const player = getCurrentPlayer();
 
-        // --- THIS IS THE CRITICAL FIX ---
-        // This block now contains its own logic to complete the action
-        // without ever calling the refunding cancelAction() function.
         if (gameState.action.type === 'buy_tile') {
-            // Step 1: Update the game state. The cost was already paid.
             gameState.board.get(key).controller = player.id;
-            
-            // Step 2: Manually clear the action state, as the action is now complete.
+            // --- The Fix: Manually clear state for a successful action ---
             gameState.action = null;
             gameState.validMoves = [];
             rangeHighlights = [];
-            
-            // Step 3: Update the UI to reflect the new board state.
             updateUI();
-            return; // Exit the function immediately.
+            return;
         }
-        // --- END OF FIX ---
 
-        // This code below will now only run for card-based actions
         if (gameState.pendingCard) {
             triggerPlayAnimation(gameState.pendingCard.card, gameState.pendingCard.rect);
             player.hand.splice(gameState.pendingCard.index, 1);
         }
         
-        if (gameState.action.type === 'place_tile') {
-            const newTileObject = {
-    q, r, type: gameState.action.tileType, controller: player.id, creature: null,
-    textureSx: Math.floor(Math.random() * (1024 - 175)),
-    textureSy: Math.floor(Math.random() * (1024 - 175))
-};gameState.board.set(key, newTileObject);
+        if (gameState.action.type === 'place_tile') {const newTileObject = { q, r, type: gameState.action.tileType, controller: player.id, creature: null, textureSx: Math.floor(Math.random() * (1024 - 150)), textureSy: Math.floor(Math.random() * (1024 - 150)) };
+gameState.board.set(key, newTileObject);
             newTiles.push({ tile: newTileObject, progress: 0 });
             boardDimensions.minQ = Math.min(boardDimensions.minQ, q);
             boardDimensions.maxQ = Math.max(boardDimensions.maxQ, q);
@@ -930,8 +1029,15 @@ function handleBoardClick(event) {
             tile.controller = player.id;
         }
         
-        // This will only be called for card actions, NOT for buy_tile actions.
-        cancelAction();
+        // --- The Fix: Manually clear state for a successful card play ---
+        // We no longer call the refunding cancelAction() here.
+        gameState.action = null;
+        gameState.pendingCard = null;
+        gameState.validMoves = [];
+        rangeHighlights = [];
+        hideChoicePrompt();
+        updateUI();
+        
     } else {
         if (gameState.action) showError("Invalid move!");
     }
