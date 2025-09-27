@@ -788,7 +788,7 @@ function removeSprite(spriteElement) {
 }
 	
 function drawRoundedOctagon(ctx, x, y, size, color, tile) {
-    const cornerRadius = size * 0.15;
+    const cornerRadius = size * 0.11;
     const points = [];
     for (let i = 0; i < 8; i++) {
         const angle = (Math.PI / 4) * i + (Math.PI / 8);
@@ -839,9 +839,20 @@ function drawRoundedOctagon(ctx, x, y, size, color, tile) {
         ctx.restore(); // CRITICAL: This removes the clip AND resets the transform.
     }
     // --- END OF FIX ---
-    
+    const glossGradient = ctx.createRadialGradient(
+        x, y - size * 1.2, // Start the gradient high above the tile
+        size * 0.1,         // With a small inner radius
+        x, y - size,      // End it slightly lower
+        size * 1.5          // With a large outer radius to create a soft falloff
+    );
+    glossGradient.addColorStop(0, 'rgba(255, 255, 255, 0.4)'); // Brighter, semi-transparent white at the center
+    glossGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');   // Fades to fully transparent
+
+    // We re-use the same octagon path to fill it with our new gloss gradient.
+    ctx.fillStyle = glossGradient;
+    ctx.fill();
     // Step 4: Draw the subtle stroke on top of everything
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.strokeStyle = 'rgba(45, 65, 45, 0.65)';
     ctx.lineWidth = 1;
     ctx.stroke();
 }
