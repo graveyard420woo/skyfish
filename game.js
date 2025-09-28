@@ -28,10 +28,13 @@ document.addEventListener('DOMContentLoaded', () => {
 	const buyTileZone = document.getElementById('buy-tile-zone'); 
 	const buyTileBtn = document.getElementById('buy-tile-btn'); 
 	const cancelActionPlaceholder = document.getElementById('cancel-action-placeholder');
+	const resetViewBtn = document.getElementById('reset-view-btn');
 	const ZOOM_SPEED = 0.001;
 	const MIN_ZOOM_TARGET = 20;
 	const MAX_ZOOM_TARGET = 100;
-	
+	const DEFAULT_ROTATION = Math.PI / 6;
+	const DEFAULT_TILT = Math.PI / 3.5;
+	let DEFAULT_ZOOM_TARGET = 50;
 	const textures = {
 		Water: new Image(),
 		Forest: new Image(),
@@ -113,6 +116,7 @@ let boardView = {
         flyUpTexts.forEach(t => { t.progress = Math.min(1, t.progress + 0.015); t.yOffset -= 1; });
         flyUpTexts = flyUpTexts.filter(t => t.progress < 1);
 		updateSpritePositions();
+		checkViewAndToggleButton();
         render();
         requestAnimationFrame(gameLoop);
     }
@@ -208,6 +212,13 @@ let boardView = {
         discardZone.addEventListener('drop', e => { e.preventDefault(); discardZone.classList.remove('drag-over'); const cardIndex = parseInt(e.dataTransfer.getData('text/plain'), 10); if (!isNaN(cardIndex)) { getCurrentPlayer().hand.splice(cardIndex, 1); updateUI(); } });
 		const spawnPlayerBtn = document.getElementById('spawn-player-btn');
 	    spawnPlayerBtn.addEventListener('click', spawnNewPlayer);
+		 resetViewBtn.addEventListener('click', () => {
+        boardView.targetRotation = DEFAULT_ROTATION;
+        boardView.targetTilt = DEFAULT_TILT;
+        boardView.targetPan = { x: 0, y: 0 };
+        TILE_SIZE.target = DEFAULT_ZOOM_TARGET;
+		resetViewBtn.classList.remove('visible');
+    });
 	
     }
 
@@ -273,6 +284,7 @@ function initializeGame() {
     boardDimensions.minR = Math.min(...keys.map(k => k[1]));
     boardDimensions.maxR = Math.max(...keys.map(k => k[1]));
     resizeAndCalculateTargetSize();
+	DEFAULT_ZOOM_TARGET = TILE_SIZE.target;
     updateUI();
     startTurnTimer();
 }
@@ -935,6 +947,23 @@ function updateUI(wasCardDrawn = false) {
     
     if (cardToAnimateIndex !== -1 && playerHandElement.children[cardToAnimateIndex]) {
         playerHandElement.children[cardToAnimateIndex].classList.add('newly-drawn');
+    }
+}
+
+function checkViewAndToggleButton() {
+    const panDistance = Math.abs(boardView.pan.x) + Math.abs(boardView.pan.y);
+    const epsilon = 0.01; // A small tolerance for floating point comparisons
+
+    const isPanned = panDistance > 1;
+    const isRotated = Math.abs(boardView.rotation - DEFAULT_ROTATION) > epsilon;
+    const isTilted = Math.abs(boardView.tilt - DEFAULT_TILT) > epsilon;
+    const isZoomed = Math.abs(TILE_SIZE.current - DEFAULT_ZOOM_TARGET) > epsilon;
+
+    if (isPanned || isRotated || isTilted || isZoomed) {
+        resetViewBtn.classList.add('visible');
+		 resetViewBtn.classList.remove('hidden'); 
+    } else {
+        resetViewBtn.classList.remove('visible');
     }
 }
 
