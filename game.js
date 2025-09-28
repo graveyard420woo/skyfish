@@ -69,13 +69,13 @@ document.addEventListener('DOMContentLoaded', () => {
     'Shadow': 'rgba(0,0,0,0.3)'
 };
     const cardDatabase = [
-        { id: 1, name: 'Growth', cost: 2, desc: 'Place a Forest tile.', effect: { type: 'place_tile', tileType: 'Forest' } },
-        { id: 2, name: 'Golem', cost: 3, desc: 'Summon a Golem.', effect: { type: 'summon_creature', targetTile: 'Mountain', creature: { type: 'Golem' } } },
+        { id: 1, name: 'Growth', cost: 2, desc: 'Place a Forest Tile From an Owned Edge Tile.', effect: { type: 'place_tile', tileType: 'Forest' } },
+        { id: 2, name: 'Golem', cost: 3, desc: 'Summon an Attacking Mountain Golem.', effect: { type: 'summon_creature', targetTile: 'Mountain', creature: { type: 'Golem' } } },
         { id: 3, name: 'Cloud Tap', cost: 1, desc: 'Gain 2 Cloud.', effect: { type: 'gain_resource', amount: 2 } },
         { id: 4, name: 'Pioneer', cost: 3, desc: 'Claim an adjacent unowned tile.', effect: { type: 'claim_tile' } },
-        { id: 5, name: 'Sky Fish', cost: 2, desc: 'Summon a Sky Fish.', effect: { type: 'summon_creature', targetTile: 'Water', creature: { type: 'Sky Fish' } } },
-        { id: 6, name: 'Dryad', cost: 4, desc: 'Spawns 2 Forests. Dies next turn.', effect: { type: 'summon_creature', targetTile: 'Forest', creature: { type: 'Dryad', lifespan: 1 } } },
-        { id: 7, name: 'Terrashape', cost: 4, desc: 'Place any tile type.', effect: { type: 'place_choice_tile', options: TILE_TYPES } }
+        { id: 5, name: 'Sky Fish', cost: 2, desc: 'Summon a Mysterious Fish.', effect: { type: 'summon_creature', targetTile: 'Water', creature: { type: 'Sky Fish' } } },
+        { id: 6, name: 'Dryad', cost: 4, desc: 'Spawns Double Forests From an Edge Tile. Dies.', effect: { type: 'summon_creature', targetTile: 'Forest', creature: { type: 'Dryad', lifespan: 1 } } },
+        { id: 7, name: 'Terrashape', cost: 4, desc: 'Place any tile type From an Edge Tile.', effect: { type: 'place_choice_tile', options: TILE_TYPES } }
     ];
     const MIN_TILT = Math.PI / 6;
     const MAX_TILT = Math.PI / 2.2;
@@ -125,10 +125,12 @@ let boardView = {
         const centerPixel = axialToIsometric(boardCenterX_Q, boardCenterY_R);
         ctx.translate(canvas.width / 2 - centerPixel.x + boardView.pan.x, canvas.height / 2 - centerPixel.y + boardView.pan.y);
         const allTiles = [...gameState.board.values(), ...newTiles.map(nt => nt.tile)];
+		
         allTiles.sort((a, b) => { const posA = axialToIsometric(a.q, a.r); const posB = axialToIsometric(b.q, b.r); const depthDiff = posA.depth - posB.depth; if (Math.abs(depthDiff) < 0.1) return posA.x - posB.x; return depthDiff; });
         allTiles.forEach(tile => drawDropShadow(ctx, tile.q, tile.r));
         allTiles.forEach(tile => { const animation = newTiles.find(nt => nt.tile === tile); draw3DTile(ctx, tile, animation ? animation.progress : 1); if (tile.controller) drawController(ctx, tile.q, tile.r); });
-        const flash = Math.abs(Math.sin(Date.now() / 200));
+        
+		const flash = Math.abs(Math.sin(Date.now() / 200));
         ctx.fillStyle = `rgba(255, 204, 0, ${0.3 * flash})`;
         rangeHighlights.forEach(tile => { const { x, y } = axialToIsometric(tile.q, tile.r); drawOctagon(ctx, x, y, TILE_SIZE.current, null, true); });
         gameState.validMoves.forEach(move => { const { x, y } = axialToIsometric(move.q, move.r); drawOctagon(ctx, x, y, TILE_SIZE.current, TILE_COLORS.Highlight, true); });
@@ -885,7 +887,7 @@ function updateUI(wasCardDrawn = false) {
     }
 
     displayItems.forEach((item, displayIndex) => {
-        const arcAngle = 10;
+        const arcAngle = 11;
         const itemAngle = (displayIndex - (handSize - 1) / 2) * (arcAngle / handSize);
         const yOffset = Math.abs(displayIndex - (handSize - 1) / 2) * 8;
         const transformStyle = `translateY(-${yOffset}px) rotate(${itemAngle}deg)`;
@@ -952,25 +954,26 @@ function updateUI(wasCardDrawn = false) {
 	boardView.pan = { x: 0, y: 0 };
     boardView.targetPan = { x: 0, y: 0 };
 	const boardWidthInTiles = (boardDimensions.maxQ - boardDimensions.minQ) + 3; const boardHeightInTiles = (boardDimensions.maxR - boardDimensions.minR) + 3; const sizeBasedOnWidth = canvas.width / (boardWidthInTiles * 1.5); const sizeBasedOnHeight = canvas.height / (boardHeightInTiles * 1.73); TILE_SIZE.target = Math.min(sizeBasedOnWidth, sizeBasedOnHeight) * 0.95; }
-    function axialToIsometric(q, r) {
-    const SPACING_FACTOR = 1; // Add a little space between tiles
+function axialToIsometric(q, r) {
+    const SPACING_FACTOR = 1.05;
     const x3d = TILE_SIZE.current * 1.5 * q * SPACING_FACTOR;
     const z3d = TILE_SIZE.current * 1.73 * (r + q / 2) * SPACING_FACTOR;
     const rotatedX = x3d * Math.cos(boardView.rotation) - z3d * Math.sin(boardView.rotation);
     const rotatedZ = x3d * Math.sin(boardView.rotation) + z3d * Math.cos(boardView.rotation);
     const screenX = rotatedX;
     const screenY = rotatedZ * Math.sin(boardView.tilt);
+    // This 'depth' value is the key for correct sorting and blending
     return { x: screenX, y: screenY, depth: rotatedZ };
 }
 function draw3DTile(ctx, tile, progress = 1) {
     const { x, y } = axialToIsometric(tile.q, tile.r);
-    const colorSeed = (tile.q * 0.2 + tile.r * 0.5);
-    const hOffset = Math.sin(colorSeed) * 5;
-    const lOffset = Math.sin(colorSeed * 2.1) * 3;
+    const colorSeed = (tile.q * 0.8 + tile.r * 0.5);
+    const hOffset = Math.sin(colorSeed) * 22;
+    const lOffset = Math.sin(colorSeed * 5.1) * 3;
     const colors = TILE_COLORS[tile.type];
     const topColor = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset}%)`;
-    const sideLight = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 8}%)`;
-    const sideDark = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 15}%)`;
+    const sideLight = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 18}%)`;
+    const sideDark = `hsl(${colors.h + hOffset}, ${colors.s}%, ${colors.l + lOffset - 23}%)`;
     const currentHeight = TILE_HEIGHT * progress;
     const currentY = y - (TILE_HEIGHT - currentHeight);
     const topY = currentY - currentHeight;
