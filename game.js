@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Constants
     const TILE_TYPES = ['Forest', 'Mountain', 'Water'];
-    const PRETTY_COLORS = ['#ffcc00', '#b300ff', '#00e6e6', '#33cc33', '#ff6600', '#ff0066', '#66ff66', '#6666ff'];
+    const PRETTY_COLORS = ['#ffcc00', '#b300ff', '#00e6e6', '#33cc33', '#ff6600', '#ff0066', '#f599b1', '#6666ff'];
     const TILE_COLORS = {
     'Forest':   { h: 140, s: 55, l: 40 }, // HSL: Hue, Saturation, Lightness
     'Mountain': { h: 210, s: 10, l: 65 },
